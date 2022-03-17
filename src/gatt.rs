@@ -43,7 +43,7 @@ impl GattBoard {
         self.device.address()
     }
 
-    pub async fn update_firmware(&self, firmware: &[u8]) -> Result<(), anyhow::Error> {
+    pub async fn start_firmware_update(&self) -> Result<(), anyhow::Error> {
         let mut buf = [0; 16];
 
         // Trigger DFU process
@@ -55,12 +55,15 @@ impl GattBoard {
         while self.read_firmware_offset().await? != 0 {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
-        println!(
-            "Offset is reset, starting write of {} bytes",
-            firmware.len()
-        );
-        let mut offset: u32 = 0;
+        Ok(())
+    }
 
+    pub async fn write_firmware(
+        &self,
+        mut offset: u32,
+        firmware: &[u8],
+    ) -> Result<(), anyhow::Error> {
+        let mut buf = [0; 16];
         for chunk in firmware.chunks(16) {
             buf[0..chunk.len()].copy_from_slice(chunk);
             if chunk.len() < buf.len() {
@@ -79,10 +82,10 @@ impl GattBoard {
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
         }
-        if offset % 4096 == 0 {
-            println!("{} bytes written", offset)
-        }
+        Ok(())
+    }
 
+    pub async fn swap_firmware(&self) -> Result<(), anyhow::Error> {
         // Write signal that DFU process is done and should be applied
         log::debug!("DFU process done, setting reset");
         self.write_char(FIRMWARE_SERVICE_UUID, CONTROL_CHAR_UUID, &[2])

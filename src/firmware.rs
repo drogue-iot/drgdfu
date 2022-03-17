@@ -1,7 +1,10 @@
+use crate::FirmwareSource;
 use anyhow::anyhow;
 use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
+use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -12,45 +15,157 @@ pub struct FirmwareFileMeta {
     pub file: PathBuf,
 }
 
-#[derive(Debug, Subcommand, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum FirmwareSource {
+pub enum FirmwareProducer {
     File {
-        file: PathBuf,
+        metadata: FirmwareFileMeta,
+        data: Vec<u8>,
     },
     Cloud {
         url: String,
         application: String,
-        token: String,
+        device: String,
+        password: String,
     },
 }
 
+impl FirmwareProducer {
+    pub fn new(source: &FirmwareSource) -> Result<Self, anyhow::Error> {
+        match source {
+            FirmwareSource::File { file } => {
+                let metadata = FirmwareFileMeta::from_file(&file)?;
+                let mut file = File::open(&metadata.file)?;
+                let mut data = Vec::new();
+                file.read_to_end(&mut data)?;
+                Ok(Self::File { metadata, data })
+            }
+            FirmwareSource::Cloud {
+                url,
+                application,
+                device,
+                password,
+            } => {
+                todo!()
+            }
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Report {
     version: String,
     mtu: Option<u32>,
-    last_version: Option<String>,
-    last_offset: Option<u32>,
+    status: Option<ReportStatus>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Command {
-    op: Operation,
+pub struct ReportStatus {
     version: String,
-    poll: Option<u32>,
-    offset: Option<u32>,
-    data: Option<Vec<u8>>,
-    checksum: Option<Vec<u8>>,
+    offset: u32,
+}
+
+impl Report {
+    pub fn first(version: &str) -> Self {
+        Self {
+            version: version.to_string(),
+            mtu: None,
+            status: None,
+        }
+    }
+
+    pub fn status(current_version: &str, offset: u32, next_version: &str) -> Self {
+        Self {
+            version: current_version.to_string(),
+            mtu: None,
+            status: Some(ReportStatus {
+                offset,
+                version: next_version.to_string(),
+            }),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub enum Command {
+    Sync {
+        version: String,
+        poll: Option<u32>,
+    },
+    Write {
+        version: String,
+        offset: u32,
+        data: Vec<u8>,
+    },
+    Swap {
+        version: String,
+        checksum: Vec<u8>,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub enum Operation {
     Sync,
     Write,
     Swap,
 }
 
-impl FirmwareSource {
-    pub async fn report(&mut self, report: &Report) -> Result<Command, FirmwareError> {
-        todo!()
+impl Command {
+    pub fn new_sync(version: &str, poll: Option<u32>) -> Self {
+        Self::Sync {
+            version: version.to_string(),
+            poll,
+        }
+    }
+
+    pub fn new_swap(version: &str, checksum: &[u8]) -> Self {
+        Self::Swap {
+            version: version.to_string(),
+            checksum: checksum.into(),
+        }
+    }
+
+    pub fn new_write(version: &str, offset: u32, data: &[u8]) -> Self {
+        Self::Write {
+            version: version.to_string(),
+            offset,
+            data: data.into(),
+        }
+    }
+}
+
+impl FirmwareProducer {
+    pub async fn report(&self, report: &Report) -> Result<Command, FirmwareError> {
+        match &self {
+            Self::File { metadata, data } => {
+                if metadata.version == report.version {
+                    Ok(Command::new_sync(&report.version, None))
+                } else {
+                    if let Some(status) = &report.status {
+                        if status.version == metadata.version {
+                            if status.offset as usize == metadata.size {
+                                Ok(Command::new_swap(&metadata.version, &[]))
+                            } else {
+                                let mtu = report.mtu.unwrap_or(4096) as usize;
+                                let to_copy =
+                                    core::cmp::min(mtu, data.len() - status.offset as usize);
+                                let s =
+                                    &data[status.offset as usize..status.offset as usize + to_copy];
+                                Ok(Command::new_write(&metadata.version, status.offset, s))
+                            }
+                        } else {
+                            log::info!("Updating with wrong status, starting over");
+                            let mtu = report.mtu.unwrap_or(4096) as usize;
+                            let to_copy = core::cmp::min(mtu, data.len());
+                            Ok(Command::new_write(&metadata.version, 0, &data[..to_copy]))
+                        }
+                    } else {
+                        let mtu = report.mtu.unwrap_or(4096) as usize;
+                        let to_copy = core::cmp::min(mtu, data.len());
+                        Ok(Command::new_write(&metadata.version, 0, &data[..to_copy]))
+                    }
+                }
+            }
+            _ => todo!(),
+        }
     }
 }
 
