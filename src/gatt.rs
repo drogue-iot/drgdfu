@@ -3,9 +3,13 @@ use bluer::{
     Device,
 };
 use std::str::FromStr;
+use crate::firmware::FirmwareDevice;
+use async_trait::async_trait;
 
 pub struct GattBoard {
-    device: Device,
+    adapter: Adapter,
+    device: String,
+    board: Option<Device>,
 }
 
 const FIRMWARE_SERVICE_UUID: uuid::Uuid = uuid::Uuid::from_u128(0x0000186100001000800000805f9b34fb);
@@ -15,8 +19,8 @@ const FIRMWARE_CHAR_UUID: uuid::Uuid = uuid::Uuid::from_u128(0x00001234000010008
 const VERSION_CHAR_UUID: uuid::Uuid = uuid::Uuid::from_u128(0x0000123700001000800000805f9b34fb);
 
 impl GattBoard {
-    pub fn new(device: Device) -> Self {
-        Self { device }
+    pub fn new(device: &str, adapter: Adapter) -> Self {
+        Self { device: device.to_string(), adapter}
     }
 
     async fn read_firmware_offset(&self) -> bluer::Result<u32> {
@@ -26,24 +30,20 @@ impl GattBoard {
         Ok(u32::from_le_bytes([data[0], data[1], data[2], data[3]]))
     }
 
-    pub async fn read_firmware_version(&self) -> bluer::Result<String> {
+    async fn read_firmware_version(&self) -> bluer::Result<String> {
         let data = self
             .read_char(FIRMWARE_SERVICE_UUID, VERSION_CHAR_UUID)
             .await?;
         Ok(String::from_str(core::str::from_utf8(&data).unwrap()).unwrap())
     }
 
-    pub async fn mark_booted(&self) -> bluer::Result<()> {
+    async fn mark_booted(&self) -> bluer::Result<()> {
         // Trigger DFU process
         self.write_char(FIRMWARE_SERVICE_UUID, CONTROL_CHAR_UUID, &[4])
             .await
     }
 
-    pub fn address(&self) -> bluer::Address {
-        self.device.address()
-    }
-
-    pub async fn start_firmware_update(&self) -> Result<(), anyhow::Error> {
+    async fn start_firmware_update(&self) -> Result<(), anyhow::Error> {
         let mut buf = [0; 16];
 
         // Trigger DFU process
@@ -58,7 +58,7 @@ impl GattBoard {
         Ok(())
     }
 
-    pub async fn write_firmware(
+    async fn write_firmware(
         &self,
         mut offset: u32,
         firmware: &[u8],
@@ -85,7 +85,7 @@ impl GattBoard {
         Ok(())
     }
 
-    pub async fn swap_firmware(&self) -> Result<(), anyhow::Error> {
+    async fn swap_firmware(&self) -> Result<(), anyhow::Error> {
         // Write signal that DFU process is done and should be applied
         log::debug!("DFU process done, setting reset");
         self.write_char(FIRMWARE_SERVICE_UUID, CONTROL_CHAR_UUID, &[2])
@@ -93,18 +93,6 @@ impl GattBoard {
 
         Ok(())
     }
-
-    /*
-    pub async fn update_firmware_from_file(&self, firmware: &Path) -> Result<(), anyhow::Error> {
-        println!("Updating firmware from file {:?}", firmware);
-        let mut f = File::open(firmware)?;
-
-        let mut buffer = Vec::new();
-        // read the whole file
-        f.read_to_end(&mut buffer)?;
-        self.update_firmware(&buffer[..]).await
-    }
-    */
 
     async fn read_char(&self, service: uuid::Uuid, c: uuid::Uuid) -> bluer::Result<Vec<u8>> {
         let service = self.find_service(service).await?.unwrap();
@@ -141,12 +129,91 @@ impl GattBoard {
     }
 
     async fn find_service(&self, service: uuid::Uuid) -> bluer::Result<Option<Service>> {
-        for s in self.device.services().await? {
+        let device = self.connect().await?;
+        for s in device.services().await? {
             let uuid = s.uuid().await?;
             if uuid == service {
                 return Ok(Some(s));
             }
         }
         Ok(None)
+    }
+
+    async fn connect(&mut self) -> bluer::Result<&mut Device> {
+        if board.is_none() {
+            let session = bluer::Session::new().await?;
+            let adapter = session.default_adapter().await?;
+            adapter.set_powered(true).await?;
+            let discover = adapter.discover_devices().await?;
+            pin_mut!(discover);
+
+            let addr = Address::from_str(&self.device)?;
+            let mut updated = false;
+
+            while let Some(evt) = discover.next().await {
+                match evt {
+                    AdapterEvent::DeviceAdded(a) if a == addr => {
+                        let device = adapter.device(a)?;
+
+                        sleep(Duration::from_secs(2)).await;
+                        if !device.is_connected().await? {
+                            log::debug!("Connecting...");
+                            let mut retries = 2;
+                            loop {
+                                match device.connect().await {
+                                    Ok(()) => break,
+                                    Err(err) if retries > 0 => {
+                                        println!("Connect error: {}", &err);
+                                        retries -= 1;
+                                    }
+                                    Err(err) => return Err(err.into()),
+                                }
+                            }
+                            log::debug!("Connected");
+                        } else {
+                            log::debug!("Already connected");
+                        }
+                        self.board.replace(device);
+                        break;
+                    }
+                    AdapterEvent::DeviceRemoved(a) if a == addr => {
+                        log::info!("Device removed: {}", a);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(self.board.as_mut().unwrap())
+    }
+}
+
+
+#[async_trait]
+impl FirmwareDevice for SerialUpdater {
+    const MTU: u32 = 128;
+    async fn version(&mut self) -> Result<String, anyhow::Error> {
+        log::info!("Reading version");
+        Ok(self.read_firmware_offset().await?)
+    }
+
+    async fn start(&mut self) -> Result<(), anyhow::Error> {
+        Ok(self.start_firmware_update().await?)
+    }
+    async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), anyhow::Error> {
+        Ok(self.write_firmware(offset, data).await?)
+    }
+    async fn swap(&mut self) -> Result<(), anyhow::Error> {
+        let r = Ok(self.swap_firmware(offset, data).await?);
+        self.adapter.remove_device(self.board.as_mut().unwrap().address()).await?;
+        self.updated = true;
+        r
+    }
+
+    async fn synced(&mut self) -> Result<(), anyhow::Error> {
+        if self.updated {
+            Ok(self.mark_booted().await?)
+        } else {
+            Ok(())
+        }
     }
 }

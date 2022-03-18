@@ -8,9 +8,11 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 mod firmware;
+mod serial;
 mod gatt;
 
 use firmware::*;
+use serial::SerialUpdater;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -18,13 +20,31 @@ struct Args {
     #[clap(short, long, parse(from_occurrences))]
     verbose: usize,
 
-    /// The DFU mode to use for updating firmware.
+    /// The tool mode
     #[clap(subcommand)]
     mode: Mode,
 }
 
 #[derive(Debug, Subcommand, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Mode {
+    /// Generate firmware metadata
+    Generate {
+        /// Version of firmware
+        version: String,
+
+        /// Firmware to generate metadata for
+        file: PathBuf,
+    },
+    /// Upload a new firmware to device
+    Upload {
+        /// The transport mode to use for updating firmware.
+        #[clap(subcommand)]
+        transport: Transport,
+    },
+}
+
+#[derive(Debug, Subcommand, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Transport {
     /// GATT mode for DFU using BLE GATT
     BleGatt {
         /// The MAC address of the device to update.
@@ -73,129 +93,27 @@ async fn main() -> anyhow::Result<()> {
     stderrlog::new().verbosity(args.verbose).init().unwrap();
 
     match args.mode {
-        Mode::BleGatt { device, mut source } => {
-            let session = bluer::Session::new().await?;
-            let adapter = session.default_adapter().await?;
-            adapter.set_powered(true).await?;
-            let discover = adapter.discover_devices().await?;
-            pin_mut!(discover);
-
-            let addr = Address::from_str(&device)?;
-            let mut updated = false;
-
-            while let Some(evt) = discover.next().await {
-                match evt {
-                    AdapterEvent::DeviceAdded(a) if a == addr => {
-                        let device = adapter.device(a)?;
-
-                        sleep(Duration::from_secs(2)).await;
-                        if !device.is_connected().await? {
-                            log::debug!("Connecting...");
-                            let mut retries = 2;
-                            loop {
-                                match device.connect().await {
-                                    Ok(()) => break,
-                                    Err(err) if retries > 0 => {
-                                        println!("Connect error: {}", &err);
-                                        retries -= 1;
-                                    }
-                                    Err(err) => return Err(err.into()),
-                                }
-                            }
-                            log::debug!("Connected");
-                        } else {
-                            log::debug!("Already connected");
-                        }
-                        let board = gatt::GattBoard::new(device);
-                        let current_version = board.read_firmware_version().await?;
-                        println!("Connected to board! Running version {}", current_version);
-
-                        let mut source: FirmwareProducer = FirmwareProducer::new(&source)?;
-                        let mut status = Status::first(&current_version, None);
-                        loop {
-                            let cmd = source.report(&status).await?;
-                            match cmd {
-                                Command::Write {
-                                    version,
-                                    offset,
-                                    data,
-                                } => {
-                                    if offset == 0 {
-                                        board.start_firmware_update().await?;
-                                    }
-                                    board.write_firmware(offset, &data).await?;
-                                    status = Status::update(
-                                        &current_version,
-                                        None,
-                                        offset + data.len() as u32,
-                                        &version,
-                                    );
-                                }
-                                Command::Sync { version, poll } => {
-                                    log::info!("Firmware in sync");
-                                    if updated {
-                                        log::info!("Marking new firmware as booted");
-                                        board.mark_booted().await?;
-                                    }
-                                    return Ok(());
-                                }
-                                Command::Swap { version, checksum } => {
-                                    log::info!("Swap operation");
-                                    board.swap_firmware().await?;
-                                    updated = true;
-                                    adapter.remove_device(board.address()).await?;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    AdapterEvent::DeviceRemoved(a) if a == addr => {
-                        log::info!("Device removed: {}", a);
-                    }
-                    _ => {}
-                }
-            }
+        Mode::Generate { version, file } => {
+            // Generate metadata
+            let firmware = FirmwareFileMeta::new(&version, &file)?;
+            println!("{}", serde_json::to_string(&firmware)?);
         }
-        Mode::Serial { port, source } => {
-            let mut source: FirmwareProducer = FirmwareProducer::new(&source)?;
-            let mut status = Status::first(&current_version, None);
-            loop {
-                let cmd = source.report(&status).await?;
-                match cmd {
-                    Command::Write {
-                        version,
-                        offset,
-                        data,
-                    } => {
-                        if offset == 0 {
-                            board.start_firmware_update().await?;
-                        }
-                        board.write_firmware(offset, &data).await?;
-                        status = Status::update(
-                            &current_version,
-                            None,
-                            offset + data.len() as u32,
-                            &version,
-                        );
-                    }
-                    Command::Sync { version, poll } => {
-                        log::info!("Firmware in sync");
-                        if updated {
-                            log::info!("Marking new firmware as booted");
-                            board.mark_booted().await?;
-                        }
-                        return Ok(());
-                    }
-                    Command::Swap { version, checksum } => {
-                        log::info!("Swap operation");
-                        board.swap_firmware().await?;
-                        updated = true;
-                        adapter.remove_device(board.address()).await?;
-                        break;
-                    }
-                }
+        Mode::Upload { transport } => match transport {
+            Transport::BleGatt { device, mut source } => {
+                let session = bluer::Session::new().await?;
+                let adapter = session.default_adapter().await?;
+                adapter.set_powered(true).await?;
+
+                let mut s = GattBoard::new(&device, adapter);
+                let mut updater = FirmwareUpdater::new(&source)?;
+                updater.run(&mut s).await?;
             }
-        }
+            Transport::Serial { port, source } => {
+                let mut s = SerialUpdater::new(&port)?;
+                let mut updater = FirmwareUpdater::new(&source)?;
+                updater.run(&mut s).await?;
+            }
+        },
     }
     Ok(())
 }
