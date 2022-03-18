@@ -51,32 +51,32 @@ impl FirmwareProducer {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Report {
+pub struct Status {
     version: String,
     mtu: Option<u32>,
-    status: Option<ReportStatus>,
+    update: Option<UpdateStatus>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct ReportStatus {
+pub struct UpdateStatus {
     version: String,
     offset: u32,
 }
 
-impl Report {
-    pub fn first(version: &str) -> Self {
+impl Status {
+    pub fn first(version: &str, mtu: Option<u32>) -> Self {
         Self {
             version: version.to_string(),
-            mtu: None,
-            status: None,
+            mtu,
+            update: None,
         }
     }
 
-    pub fn status(current_version: &str, offset: u32, next_version: &str) -> Self {
+    pub fn update(version: &str, mtu: Option<u32>, offset: u32, next_version: &str) -> Self {
         Self {
-            version: current_version.to_string(),
-            mtu: None,
-            status: Some(ReportStatus {
+            version: version.to_string(),
+            mtu,
+            update: Some(UpdateStatus {
                 offset,
                 version: next_version.to_string(),
             }),
@@ -99,13 +99,6 @@ pub enum Command {
         version: String,
         checksum: Vec<u8>,
     },
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-pub enum Operation {
-    Sync,
-    Write,
-    Swap,
 }
 
 impl Command {
@@ -133,32 +126,32 @@ impl Command {
 }
 
 impl FirmwareProducer {
-    pub async fn report(&self, report: &Report) -> Result<Command, FirmwareError> {
+    pub async fn report(&self, status: &Status) -> Result<Command, FirmwareError> {
         match &self {
             Self::File { metadata, data } => {
-                if metadata.version == report.version {
-                    Ok(Command::new_sync(&report.version, None))
+                if metadata.version == status.version {
+                    Ok(Command::new_sync(&status.version, None))
                 } else {
-                    if let Some(status) = &report.status {
-                        if status.version == metadata.version {
-                            if status.offset as usize == metadata.size {
+                    if let Some(update) = &status.update {
+                        if update.version == metadata.version {
+                            if update.offset as usize == metadata.size {
                                 Ok(Command::new_swap(&metadata.version, &[]))
                             } else {
-                                let mtu = report.mtu.unwrap_or(4096) as usize;
+                                let mtu = status.mtu.unwrap_or(4096) as usize;
                                 let to_copy =
-                                    core::cmp::min(mtu, data.len() - status.offset as usize);
+                                    core::cmp::min(mtu, data.len() - update.offset as usize);
                                 let s =
-                                    &data[status.offset as usize..status.offset as usize + to_copy];
-                                Ok(Command::new_write(&metadata.version, status.offset, s))
+                                    &data[update.offset as usize..update.offset as usize + to_copy];
+                                Ok(Command::new_write(&metadata.version, update.offset, s))
                             }
                         } else {
                             log::info!("Updating with wrong status, starting over");
-                            let mtu = report.mtu.unwrap_or(4096) as usize;
+                            let mtu = status.mtu.unwrap_or(4096) as usize;
                             let to_copy = core::cmp::min(mtu, data.len());
                             Ok(Command::new_write(&metadata.version, 0, &data[..to_copy]))
                         }
                     } else {
-                        let mtu = report.mtu.unwrap_or(4096) as usize;
+                        let mtu = status.mtu.unwrap_or(4096) as usize;
                         let to_copy = core::cmp::min(mtu, data.len());
                         Ok(Command::new_write(&metadata.version, 0, &data[..to_copy]))
                     }
@@ -167,6 +160,12 @@ impl FirmwareProducer {
             _ => todo!(),
         }
     }
+}
+
+// A device capable of updating it's firmware
+#[async_trait]
+pub trait FirmwareDevice {
+    async fn start(&mut self) -> Result<(), anyhow::Error>;
 }
 
 #[derive(Debug)]
@@ -205,101 +204,3 @@ impl From<serde_json::Error> for FirmwareError {
 }
 
 impl serde::ser::StdError for FirmwareError {}
-
-/*
-
-
-impl FirmwareMetadata {
-    pub fn from_file(path: &Path) -> Result<Self, FirmwareError> {
-        let data = std::fs::read_to_string(path)?;
-        let metadata = serde_json::from_str(&data)?;
-        Ok(metadata)
-    }
-
-    pub fn from_http(url: String, size: usize, version: String) -> Self {
-        Self {
-            version,
-            size,
-            data: FirmwareData::Http(url),
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub enum FirmwareData {
-    #[serde(rename = "file")]
-    File(PathBuf),
-    #[serde(rename = "http")]
-    Http(String),
-}
-
-pub struct Deployment {
-    pub id: String,
-    pub metadata: FirmwareMetadata,
-}
-
-pub struct FirmwareClient {
-    url: String,
-}
-
-impl FirmwareClient {
-    pub fn new(url: &str) -> Self {
-        Self {
-            url: url.to_string(),
-        }
-    }
-
-    pub async fn fetch_firmware(&self, url: &str) -> Result<Bytes, anyhow::Error> {
-        let client = reqwest::Client::new();
-        let res = client.get(url).send().await?.bytes().await?;
-        Ok(res)
-    }
-
-    pub async fn wait_update(&self, current_version: &str) -> Result<Deployment, anyhow::Error> {
-        let client = reqwest::Client::new();
-        loop {
-            let url = format!("{}/v1/poll/burrboard", self.url);
-            let res = client.get(&url).send().await;
-
-            let poll: Duration = match res {
-                Ok(res) => {
-                    let j: serde_json::Value = res.json().await.unwrap();
-                    println!("RESULT:{:?}", j);
-
-                    if let Some(current) = j.get("current") {
-                        if let Some(version) = current["version"].as_str() {
-                            if version != current_version {
-                                let size = current["size"]
-                                    .as_str()
-                                    .ok_or(anyhow!("error reading firmware size"))?
-                                    .parse::<usize>()?;
-                                let path = format! {"{}/v1/fetch/burrboard/{}", self.url, version};
-                                return Ok(Deployment {
-                                    id: version.to_string(),
-                                    metadata: FirmwareMetadata::from_http(
-                                        path,
-                                        size as usize,
-                                        version.to_string(),
-                                    ),
-                                });
-                            }
-                        }
-                    }
-
-                    if let Some(interval) = j["interval"].as_i64() {
-                        Duration::from_secs(interval as u64)
-                    } else {
-                        Duration::from_secs(5)
-                    }
-                }
-                Err(e) => {
-                    println!("ERROR FIRMWARE: {:?}", e);
-                    Duration::from_secs(5)
-                }
-            };
-            println!("Polling firmware server in {} seconds", poll.as_secs());
-            tokio::time::sleep(poll).await;
-        }
-    }
-}
-*/

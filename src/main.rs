@@ -111,9 +111,9 @@ async fn main() -> anyhow::Result<()> {
                         println!("Connected to board! Running version {}", current_version);
 
                         let mut source: FirmwareProducer = FirmwareProducer::new(&source)?;
-                        let mut report = Report::first(&current_version);
+                        let mut status = Status::first(&current_version, None);
                         loop {
-                            let cmd = source.report(&report).await?;
+                            let cmd = source.report(&status).await?;
                             match cmd {
                                 Command::Write {
                                     version,
@@ -124,8 +124,9 @@ async fn main() -> anyhow::Result<()> {
                                         board.start_firmware_update().await?;
                                     }
                                     board.write_firmware(offset, &data).await?;
-                                    report = Report::status(
+                                    status = Status::update(
                                         &current_version,
+                                        None,
                                         offset + data.len() as u32,
                                         &version,
                                     );
@@ -155,7 +156,46 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Mode::Serial { port, source } => {}
+        Mode::Serial { port, source } => {
+            let mut source: FirmwareProducer = FirmwareProducer::new(&source)?;
+            let mut status = Status::first(&current_version, None);
+            loop {
+                let cmd = source.report(&status).await?;
+                match cmd {
+                    Command::Write {
+                        version,
+                        offset,
+                        data,
+                    } => {
+                        if offset == 0 {
+                            board.start_firmware_update().await?;
+                        }
+                        board.write_firmware(offset, &data).await?;
+                        status = Status::update(
+                            &current_version,
+                            None,
+                            offset + data.len() as u32,
+                            &version,
+                        );
+                    }
+                    Command::Sync { version, poll } => {
+                        log::info!("Firmware in sync");
+                        if updated {
+                            log::info!("Marking new firmware as booted");
+                            board.mark_booted().await?;
+                        }
+                        return Ok(());
+                    }
+                    Command::Swap { version, checksum } => {
+                        log::info!("Swap operation");
+                        board.swap_firmware().await?;
+                        updated = true;
+                        adapter.remove_device(board.address()).await?;
+                        break;
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }
