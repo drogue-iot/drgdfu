@@ -8,11 +8,12 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 mod firmware;
-mod serial;
 mod gatt;
+mod serial;
 
 use firmware::*;
-use serial::SerialUpdater;
+use gatt::*;
+use serial::*;
 
 #[derive(Parser, Debug)]
 struct Args {
