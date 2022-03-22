@@ -57,7 +57,6 @@ impl GattBoard {
         self.write_char(FIRMWARE_SERVICE_UUID, CONTROL_CHAR_UUID, &[1])
             .await?;
 
-        println!("Triggered DFU init sequence");
         // Wait until firmware offset is reset
         while self.read_firmware_offset().await? != 0 {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;

@@ -178,6 +178,10 @@ impl FirmwareUpdater {
                     data,
                 } => {
                     if offset == 0 {
+                        println!(
+                            "Updating device firmware from {} to {}",
+                            current_version, version
+                        );
                         device.start().await?;
                     }
                     device.write(offset, &data).await?;
@@ -194,7 +198,7 @@ impl FirmwareUpdater {
                     return Ok(true);
                 }
                 Command::Swap { version, checksum } => {
-                    log::info!("Swap operation");
+                    println!("Firmware written, instructing device to swap");
                     device.swap().await?;
                     return Ok(false);
                 }
@@ -206,9 +210,9 @@ impl FirmwareUpdater {
     pub async fn run<F: FirmwareDevice>(&self, device: &mut F) -> Result<(), anyhow::Error> {
         loop {
             let current_version = device.version().await?;
-            log::info!("Device reports version {}", current_version);
+            println!("Device reports version {}", current_version);
             if self.check(&current_version, device).await? {
-                log::info!("Firmware updated");
+                println!("Device is up to date");
                 break;
             }
         }
