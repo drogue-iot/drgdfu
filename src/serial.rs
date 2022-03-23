@@ -1,10 +1,10 @@
 use crate::firmware::FirmwareDevice;
 use anyhow::anyhow;
 use async_trait::async_trait;
+use postcard::{from_bytes, to_slice};
 use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio_serial::{SerialStream};
-use postcard::{to_slice, from_bytes};
+use tokio_serial::SerialStream;
 
 pub struct SerialUpdater {
     port: SerialStream,
@@ -29,7 +29,7 @@ impl SerialUpdater {
         self.port.write(&self.buffer).await?;
 
         self.port.read_exact(&mut self.buffer).await?;
-        let response : Result<Option<SerialResponse>, SerialError>= from_bytes(&self.buffer)?;
+        let response: Result<Option<SerialResponse>, SerialError> = from_bytes(&self.buffer)?;
         match response {
             Ok(r) => Ok(r),
             Err(e) => Err(anyhow!("Error frame: {:?}", e)),
@@ -39,9 +39,8 @@ impl SerialUpdater {
 
 #[async_trait]
 impl FirmwareDevice for SerialUpdater {
-    const MTU: u32 = 128;
+    const MTU: u32 = 768;
     async fn version(&mut self) -> Result<String, anyhow::Error> {
-        log::info!("Reading version");
         let response = self.request(SerialCommand::Version).await?;
         if let Some(SerialResponse::Version(v)) = response {
             Ok(core::str::from_utf8(&v[..])?.to_string())
@@ -55,17 +54,18 @@ impl FirmwareDevice for SerialUpdater {
         Ok(())
     }
     async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), anyhow::Error> {
-        log::info!("Writing DFU offset {} len {}", offset, data.len());
-        self.request(SerialCommand::Write(offset, data))
-            .await?;
-
-        log::info!("Data written!");
+        self.request(SerialCommand::Write(offset, data)).await?;
         Ok(())
     }
 
     async fn swap(&mut self) -> Result<(), anyhow::Error> {
         self.request(SerialCommand::Swap).await?;
-        Ok(())
+        self.port.read_exact(&mut self.buffer).await?;
+        let response: Result<Option<SerialResponse>, SerialError> = from_bytes(&self.buffer)?;
+        match response {
+            Ok(_) => Ok(()),
+            Err(e) => Err(anyhow!("Error during swap: {:?}", e)),
+        }
     }
 
     async fn synced(&mut self) -> Result<(), anyhow::Error> {
@@ -76,7 +76,7 @@ impl FirmwareDevice for SerialUpdater {
 
 /// Defines a serial protocol for DFU
 use serde::{Deserialize, Serialize};
-pub const FRAME_SIZE: usize = 512;
+pub const FRAME_SIZE: usize = 1024;
 
 #[derive(Serialize, Deserialize)]
 pub enum SerialCommand<'a> {

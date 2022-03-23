@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::Read;
-use std::path::{PathBuf};
+use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FirmwareFileMeta {
@@ -188,12 +188,18 @@ impl FirmwareUpdater {
                         &version,
                     );
                 }
-                Command::Sync { version: _, poll: _ } => {
+                Command::Sync {
+                    version: _,
+                    poll: _,
+                } => {
                     log::info!("Firmware in sync");
                     device.synced().await?;
                     return Ok(true);
                 }
-                Command::Swap { version: _, checksum: _ } => {
+                Command::Swap {
+                    version: _,
+                    checksum: _,
+                } => {
                     println!("Firmware written, instructing device to swap");
                     device.swap().await?;
                     return Ok(false);
