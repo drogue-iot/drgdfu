@@ -1,11 +1,5 @@
 use std::path::PathBuf;
-
-use bluer::{AdapterEvent, Address};
 use clap::{Parser, Subcommand};
-use core::str::FromStr;
-use futures::{pin_mut, StreamExt};
-use std::time::Duration;
-use tokio::time::sleep;
 
 mod firmware;
 mod gatt;
@@ -100,18 +94,18 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", serde_json::to_string(&firmware)?);
         }
         Mode::Upload { transport } => match transport {
-            Transport::BleGatt { device, mut source } => {
+            Transport::BleGatt { device, source } => {
                 let session = bluer::Session::new().await?;
                 let adapter = session.default_adapter().await?;
                 adapter.set_powered(true).await?;
 
                 let mut s = GattBoard::new(&device, adapter);
-                let mut updater = FirmwareUpdater::new(&source)?;
+                let updater = FirmwareUpdater::new(&source)?;
                 updater.run(&mut s).await?;
             }
             Transport::Serial { port, source } => {
                 let mut s = SerialUpdater::new(&port)?;
-                let mut updater = FirmwareUpdater::new(&source)?;
+                let updater = FirmwareUpdater::new(&source)?;
                 updater.run(&mut s).await?;
             }
         },

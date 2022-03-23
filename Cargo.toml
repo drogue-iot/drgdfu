@@ -23,6 +23,4 @@ futures = "0.3"
 anyhow = "1.0"
 humantime = "2"
 tokio-serial = "5.4.1"
-
-[features]
-default = []
+postcard = "0.7"

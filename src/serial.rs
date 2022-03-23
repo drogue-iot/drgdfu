@@ -1,16 +1,14 @@
 use crate::firmware::FirmwareDevice;
 use anyhow::anyhow;
-use anyhow::Error;
 use async_trait::async_trait;
-use core::future::Future;
 use std::path::PathBuf;
-use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
-use tokio::time::sleep;
-use tokio_serial::{SerialPort, SerialPortBuilder, SerialStream};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio_serial::{SerialStream};
+use postcard::{to_slice, from_bytes};
 
 pub struct SerialUpdater {
     port: SerialStream,
+    buffer: [u8; FRAME_SIZE],
 }
 
 impl SerialUpdater {
@@ -19,23 +17,24 @@ impl SerialUpdater {
         let builder = tokio_serial::new(p, 115200);
         Ok(Self {
             port: SerialStream::open(&builder)?,
+            buffer: [0; FRAME_SIZE],
         })
     }
-}
 
-#[repr(u8)]
-pub enum SerialCommand {
-    Version = 1,
-    Start = 2,
-    Write = 3,
-    Swap = 4,
-    Sync = 5,
-}
+    async fn request<'m>(
+        &'m mut self,
+        command: SerialCommand<'m>,
+    ) -> Result<Option<SerialResponse<'m>>, anyhow::Error> {
+        to_slice(&command, &mut self.buffer)?;
+        self.port.write(&self.buffer).await?;
 
-#[repr(u8)]
-pub enum SerialResponse {
-    Ok = 1,
-    Error = 2,
+        self.port.read_exact(&mut self.buffer).await?;
+        let response : Result<Option<SerialResponse>, SerialError>= from_bytes(&self.buffer)?;
+        match response {
+            Ok(r) => Ok(r),
+            Err(e) => Err(anyhow!("Error frame: {:?}", e)),
+        }
+    }
 }
 
 #[async_trait]
@@ -43,52 +42,60 @@ impl FirmwareDevice for SerialUpdater {
     const MTU: u32 = 128;
     async fn version(&mut self) -> Result<String, anyhow::Error> {
         log::info!("Reading version");
-        self.port.write(&[SerialCommand::Version as u8]).await?;
-
-        let mut rx = [0; u8::MAX as usize];
-        self.port.read_exact(&mut rx[..1]).await?;
-
-        let len = rx[0] as usize;
-
-        self.port.read_exact(&mut rx[..len]).await?;
-        log::info!("Read {} bytes", len);
-        Ok(core::str::from_utf8(&rx[..len])?.to_string())
+        let response = self.request(SerialCommand::Version).await?;
+        if let Some(SerialResponse::Version(v)) = response {
+            Ok(core::str::from_utf8(&v[..])?.to_string())
+        } else {
+            Err(anyhow!("Error reading version"))
+        }
     }
 
     async fn start(&mut self) -> Result<(), anyhow::Error> {
-        self.port.write(&[SerialCommand::Start as u8]).await?;
-
-        let mut rx = [0; 1];
-        self.port.read_exact(&mut rx).await?;
-        if rx[0] == 1 {
-            Ok(())
-        } else {
-            Err(anyhow!("Error triggering DFU process"))
-        }
+        self.request(SerialCommand::Start).await?;
+        Ok(())
     }
     async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), anyhow::Error> {
         log::info!("Writing DFU offset {} len {}", offset, data.len());
-        self.port.write(&[SerialCommand::Write as u8]).await?;
-        self.port.write(&offset.to_le_bytes()).await?;
-        self.port.write(&data.len().to_le_bytes()).await?;
-        self.port.write(&data).await?;
+        self.request(SerialCommand::Write(offset, data))
+            .await?;
 
-        let mut rx = [0; 1];
-        self.port.read_exact(&mut rx).await?;
-        if rx[0] == 1 {
-            log::info!("Data written!");
-            sleep(Duration::from_secs(2)).await;
-            Ok(())
-        } else {
-            log::warn!("Error writing data");
-            Err(anyhow!("Error writing DFU packet"))
-        }
+        log::info!("Data written!");
+        Ok(())
     }
+
     async fn swap(&mut self) -> Result<(), anyhow::Error> {
-        todo!()
+        self.request(SerialCommand::Swap).await?;
+        Ok(())
     }
 
     async fn synced(&mut self) -> Result<(), anyhow::Error> {
-        todo!()
+        self.request(SerialCommand::Sync).await?;
+        Ok(())
     }
+}
+
+/// Defines a serial protocol for DFU
+use serde::{Deserialize, Serialize};
+pub const FRAME_SIZE: usize = 512;
+
+#[derive(Serialize, Deserialize)]
+pub enum SerialCommand<'a> {
+    Version,
+    Start,
+    Write(u32, &'a [u8]),
+    Swap,
+    Sync,
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum SerialResponse<'a> {
+    Version(&'a [u8]),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum SerialError {
+    Flash,
+    Busy,
+    Memory,
+    Protocol,
 }

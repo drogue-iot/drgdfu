@@ -1,14 +1,9 @@
 use crate::FirmwareSource;
-use anyhow::anyhow;
 use async_trait::async_trait;
-use bytes::Bytes;
-use clap::{Parser, Subcommand};
-use core::future::Future;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::Read;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::path::{PathBuf};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FirmwareFileMeta {
@@ -17,6 +12,7 @@ pub struct FirmwareFileMeta {
     pub file: PathBuf,
 }
 
+#[allow(dead_code)]
 pub enum FirmwareUpdater {
     File {
         metadata: FirmwareFileMeta,
@@ -41,10 +37,10 @@ impl FirmwareUpdater {
                 Ok(Self::File { metadata, data })
             }
             FirmwareSource::Cloud {
-                url,
-                application,
-                device,
-                password,
+                url: _,
+                application: _,
+                device: _,
+                password: _,
             } => {
                 todo!()
             }
@@ -192,12 +188,12 @@ impl FirmwareUpdater {
                         &version,
                     );
                 }
-                Command::Sync { version, poll } => {
+                Command::Sync { version: _, poll: _ } => {
                     log::info!("Firmware in sync");
                     device.synced().await?;
                     return Ok(true);
                 }
-                Command::Swap { version, checksum } => {
+                Command::Swap { version: _, checksum: _ } => {
                     println!("Firmware written, instructing device to swap");
                     device.swap().await?;
                     return Ok(false);
@@ -239,7 +235,7 @@ pub enum FirmwareError {
 
 impl FirmwareFileMeta {
     pub fn new(version: &str, path: &PathBuf) -> Result<Self, FirmwareError> {
-        let mut f = File::open(path)?;
+        let f = File::open(path)?;
         let metadata = f.metadata()?;
         let len = metadata.len();
         Ok(Self {
