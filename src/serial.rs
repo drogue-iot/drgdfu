@@ -60,11 +60,18 @@ impl FirmwareDevice for SerialUpdater {
 
     async fn swap(&mut self) -> Result<(), anyhow::Error> {
         self.request(SerialCommand::Swap).await?;
-        self.port.read_exact(&mut self.buffer).await?;
-        let response: Result<Option<SerialResponse>, SerialError> = from_bytes(&self.buffer)?;
-        match response {
-            Ok(_) => Ok(()),
-            Err(e) => Err(anyhow!("Error during swap: {:?}", e)),
+        match self.port.read_exact(&mut self.buffer).await {
+            Ok(_) => {
+                let response: Result<Option<SerialResponse>, SerialError> =
+                    from_bytes(&self.buffer)?;
+                match response {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(anyhow!("Error during swap: {:?}", e)),
+                }
+            }
+            Err(_) => {
+                Err(anyhow!("Serial port error. Rerun command once port has reappeared to mark firmware as swapped"))
+            }
         }
     }
 
