@@ -97,7 +97,6 @@ impl FirmwareUpdater {
                 password,
             } => loop {
                 let payload = serde_json::to_string(status)?;
-                println!("Sending status to cloud");
                 let result = client
                     .post(url.clone())
                     .basic_auth(user, Some(password))
@@ -116,11 +115,11 @@ impl FirmwareUpdater {
                     }
                     Ok(r) => {
                         if let Ok(payload) = r.text().await {
-                            println!("Received command: {:?}", payload);
-                            if let Ok(cmd) = serde_json::from_str::<CommandRef>(&payload) {
-                                return Ok(cmd.into());
+                            log::trace!("Received command: {:?}", payload);
+                            if let Ok(cmd) = serde_json::from_str::<Command>(&payload) {
+                                return Ok(cmd);
                             } else {
-                                println!("Error parsing command, retrying in 1 sec");
+                                log::trace!("Error parsing command, retrying in 1 sec");
                             }
                         }
                         sleep(Duration::from_secs(1)).await;
@@ -138,6 +137,7 @@ impl FirmwareUpdater {
     ) -> Result<bool, anyhow::Error> {
         let mut status = Status::first(&current_version, Some(F::MTU));
         #[allow(unused_mut)]
+        #[allow(unused_assignments)]
         let mut v = String::new();
         loop {
             let cmd = self.report(&status).await?;
@@ -147,6 +147,7 @@ impl FirmwareUpdater {
                     offset,
                     data,
                 } => {
+                    v = version.clone();
                     if offset == 0 {
                         println!(
                             "Updating device firmware from {} to {}",
