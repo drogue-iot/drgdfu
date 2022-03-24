@@ -335,6 +335,7 @@ dependencies = [
  "bytes",
  "chrono",
  "clap",
+ "drogue-ajour-protocol",
  "futures",
  "humantime",
  "log",
@@ -346,6 +347,14 @@ dependencies = [
  "tokio",
  "tokio-serial",
  "uuid",
+]
+
+[[package]]
+name = "drogue-ajour-protocol"
+version = "0.1.0"
+source = "git+https://github.com/lulf/drogue-ajour.git?branch=main#d07fd125b14cbf0ef375999f8a9a9f2e757b9cfa"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -1590,9 +1599,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-serial"
-version = "5.4.2"
+version = "5.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "858a2b7492f341f3de07709ed9bd051d7fc88c290d57af4c5f46e5bfe5c3439c"
+checksum = "e5488e0c75c70e880823aebc3ad4ac0a6da6f48d95bc1b9a52bd3200d6f1e724"
 dependencies = [
  "cfg-if 1.0.0",
  "futures",
