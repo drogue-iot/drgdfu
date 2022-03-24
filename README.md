@@ -1,2 +1,13 @@
 # drgdfu
-An firmware update tool for devices with DFU capabilities
+
+An firmware update tool for devices with DFU capabilities. The devices are assumed to support the serial or GATT based protocols for updating firmware from [Drogue Device](https://github.com/drogue-iot/drogue-device/tree/main/examples/nrf52/adafruit-feather-nrf52840/bootloader-dfu).
+
+Supported protocols:
+
+* Serial
+* BLE GATT
+
+Supported firmware sources:
+
+* File
+* Future: Drogue Cloud
