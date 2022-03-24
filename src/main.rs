@@ -4,10 +4,12 @@ use std::path::PathBuf;
 mod firmware;
 mod gatt;
 mod serial;
+mod simulator;
 
 use firmware::*;
 use gatt::*;
 use serial::*;
+use simulator::*;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -25,9 +27,11 @@ pub enum Mode {
     /// Generate firmware metadata
     Generate {
         /// Version of firmware
+        #[clap(long)]
         version: String,
 
         /// Firmware to generate metadata for
+        #[clap(long)]
         file: PathBuf,
     },
     /// Upload a new firmware to device
@@ -60,6 +64,12 @@ pub enum Transport {
         #[clap(subcommand)]
         source: FirmwareSource,
     },
+    /// Fake transport simulating a device. Convenient for testing the protocol
+    Simulated {
+        /// The source to use for firmware.
+        #[clap(subcommand)]
+        source: FirmwareSource,
+    },
 }
 
 #[derive(Debug, Subcommand, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -69,15 +79,19 @@ pub enum FirmwareSource {
     /// Cloud based firmware source for updating from Drogue IoT
     Cloud {
         /// Url to the HTTP endpoint of Drogue IoT Cloud
-        url: String,
+        #[clap(long)]
+        http: String,
 
         /// The application to use.
+        #[clap(long)]
         application: String,
 
         /// The device name to use.
+        #[clap(long)]
         device: String,
 
         /// Password to use for device.
+        #[clap(long)]
         password: String,
     },
 }
@@ -105,6 +119,11 @@ async fn main() -> anyhow::Result<()> {
             }
             Transport::Serial { port, source } => {
                 let mut s = SerialUpdater::new(&port)?;
+                let updater = FirmwareUpdater::new(&source)?;
+                updater.run(&mut s).await?;
+            }
+            Transport::Simulated { source } => {
+                let mut s = DeviceSimulator::new();
                 let updater = FirmwareUpdater::new(&source)?;
                 updater.run(&mut s).await?;
             }

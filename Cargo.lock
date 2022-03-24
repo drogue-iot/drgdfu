@@ -352,7 +352,7 @@ dependencies = [
 [[package]]
 name = "drogue-ajour-protocol"
 version = "0.1.0"
-source = "git+https://github.com/lulf/drogue-ajour.git?branch=main#d07fd125b14cbf0ef375999f8a9a9f2e757b9cfa"
+source = "git+https://github.com/lulf/drogue-ajour.git?branch=main#000a2270f8689737271bac90fe3b08ce620946ea"
 dependencies = [
  "serde",
 ]

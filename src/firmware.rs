@@ -1,10 +1,12 @@
 use crate::FirmwareSource;
+use anyhow::anyhow;
 use async_trait::async_trait;
 use drogue_ajour_protocol::*;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
+use tokio::time::{sleep, Duration};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FirmwareFileMeta {
@@ -21,9 +23,9 @@ pub enum FirmwareUpdater {
     },
     Cloud {
         url: String,
-        application: String,
-        device: String,
+        user: String,
         password: String,
+        client: reqwest::Client,
     },
 }
 
@@ -38,50 +40,94 @@ impl FirmwareUpdater {
                 Ok(Self::File { metadata, data })
             }
             FirmwareSource::Cloud {
-                url: _,
-                application: _,
-                device: _,
-                password: _,
-            } => {
-                todo!()
-            }
+                http,
+                application,
+                device,
+                password,
+            } => Ok(Self::Cloud {
+                client: reqwest::Client::new(),
+                url: format!("{}/v1/dfu", http),
+                user: format!("{}@{}", device, application),
+                password: password.to_string(),
+            }),
         }
     }
 }
 
 impl FirmwareUpdater {
-    async fn report<'m>(&'m self, status: &Status<'m>) -> Result<Command<'m>, FirmwareError> {
+    async fn report<'m>(&'m self, status: &Status<'m>) -> Result<Command, anyhow::Error> {
         match &self {
             Self::File { metadata, data } => {
                 if metadata.version == status.version {
-                    Ok(Command::new_sync(&status.version, None))
+                    Ok(CommandRef::new_sync(&status.version, None).into())
                 } else {
                     if let Some(update) = &status.update {
                         if update.version == metadata.version {
                             if update.offset as usize == metadata.size {
-                                Ok(Command::new_swap(&metadata.version, &[]))
+                                Ok(CommandRef::new_swap(&metadata.version, &[]).into())
                             } else {
                                 let mtu = status.mtu.unwrap_or(4096) as usize;
                                 let to_copy =
                                     core::cmp::min(mtu, data.len() - update.offset as usize);
                                 let s =
                                     &data[update.offset as usize..update.offset as usize + to_copy];
-                                Ok(Command::new_write(&metadata.version, update.offset, s))
+                                Ok(CommandRef::new_write(&metadata.version, update.offset, s)
+                                    .into())
                             }
                         } else {
                             log::info!("Updating with wrong status, starting over");
                             let mtu = status.mtu.unwrap_or(4096) as usize;
                             let to_copy = core::cmp::min(mtu, data.len());
-                            Ok(Command::new_write(&metadata.version, 0, &data[..to_copy]))
+                            Ok(
+                                CommandRef::new_write(&metadata.version, 0, &data[..to_copy])
+                                    .into(),
+                            )
                         }
                     } else {
                         let mtu = status.mtu.unwrap_or(4096) as usize;
                         let to_copy = core::cmp::min(mtu, data.len());
-                        Ok(Command::new_write(&metadata.version, 0, &data[..to_copy]))
+                        Ok(CommandRef::new_write(&metadata.version, 0, &data[..to_copy]).into())
                     }
                 }
             }
-            _ => todo!(),
+            Self::Cloud {
+                url,
+                user,
+                client,
+                password,
+            } => loop {
+                let payload = serde_json::to_string(status)?;
+                println!("Sending status to cloud");
+                let result = client
+                    .post(url.clone())
+                    .basic_auth(user, Some(password))
+                    .query(&[("ct", 30)])
+                    .json(&payload)
+                    .send()
+                    .await;
+
+                match result {
+                    Ok(r) if !r.status().is_success() => {
+                        return Err(anyhow!(
+                            "Error reporting status to cloud: {}: {}",
+                            r.status(),
+                            r.text().await.unwrap_or_default()
+                        ))
+                    }
+                    Ok(r) => {
+                        if let Ok(payload) = r.text().await {
+                            println!("Received command: {:?}", payload);
+                            if let Ok(cmd) = serde_json::from_str::<CommandRef>(&payload) {
+                                return Ok(cmd.into());
+                            } else {
+                                println!("Error parsing command, retrying in 1 sec");
+                            }
+                        }
+                        sleep(Duration::from_secs(1)).await;
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            },
         }
     }
 
@@ -91,6 +137,8 @@ impl FirmwareUpdater {
         device: &mut F,
     ) -> Result<bool, anyhow::Error> {
         let mut status = Status::first(&current_version, Some(F::MTU));
+        #[allow(unused_mut)]
+        let mut v = String::new();
         loop {
             let cmd = self.report(&status).await?;
             match cmd {
@@ -111,7 +159,7 @@ impl FirmwareUpdater {
                         &current_version,
                         Some(F::MTU),
                         offset + data.len() as u32,
-                        &version,
+                        &v,
                     );
                 }
                 Command::Sync {

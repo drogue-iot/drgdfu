@@ -24,5 +24,5 @@ anyhow = "1.0"
 humantime = "2"
 tokio-serial = "5.4.1"
 postcard = "0.7"
-# drogue-ajour-protocol = { path = "../drogue-ajour/protocol" }
-drogue-ajour-protocol = { git = "https://github.com/lulf/drogue-ajour.git", branch = "main" }
+#drogue-ajour-protocol = { path = "../drogue-ajour/protocol", features = ["std"] }
+drogue-ajour-protocol = { git = "https://github.com/lulf/drogue-ajour.git", branch = "main", features = ["std"] }
