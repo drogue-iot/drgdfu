@@ -342,6 +342,7 @@ dependencies = [
  "postcard",
  "reqwest",
  "serde",
+ "serde_cbor",
  "serde_json",
  "stderrlog",
  "tokio",
@@ -352,9 +353,10 @@ dependencies = [
 [[package]]
 name = "drogue-ajour-protocol"
 version = "0.1.0"
-source = "git+https://github.com/lulf/drogue-ajour.git?branch=main#000a2270f8689737271bac90fe3b08ce620946ea"
 dependencies = [
+ "heapless",
  "serde",
+ "serde_bytes",
 ]
 
 [[package]]
@@ -534,6 +536,12 @@ dependencies = [
  "tokio-util",
  "tracing",
 ]
+
+[[package]]
+name = "half"
+version = "1.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eabb4a44450da02c90444cf74558da904edde8fb4e9035a9a6a4e15445af0bd7"
 
 [[package]]
 name = "hash32"
@@ -1318,6 +1326,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce31e24b01e1e524df96f1c2fdd054405f8d7376249a5110886fb4b658484789"
 dependencies = [
  "serde_derive",
+]
+
+[[package]]
+name = "serde_bytes"
+version = "0.11.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16ae07dd2f88a366f15bd0632ba725227018c69a1c8550a927324f8eb8368bb9"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "serde_cbor"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bef2ebfde456fb76bbcf9f59315333decc4fda0b2b44b420243c11e0f5ec1f5"
+dependencies = [
+ "half",
+ "serde",
 ]
 
 [[package]]

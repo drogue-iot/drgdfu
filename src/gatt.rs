@@ -208,7 +208,7 @@ impl FirmwareDevice for GattBoard {
     async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), anyhow::Error> {
         Ok(self.write_firmware(offset, data).await?)
     }
-    async fn swap(&mut self) -> Result<(), anyhow::Error> {
+    async fn swap(&mut self, _: [u8; 32]) -> Result<(), anyhow::Error> {
         log::info!("Swapping firmware");
         let r = Ok(self.swap_firmware().await?);
         self.adapter

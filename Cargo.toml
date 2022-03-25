@@ -17,6 +17,8 @@ log = "0.4.11"
 chrono = "0.4"
 bytes = "1.1"
 serde_json = "1"
+serde_cbor = "0.11"
+
 serde = { version = "1", features = ["derive"] }
 stderrlog = "0.4"
 futures = "0.3"
@@ -24,5 +26,5 @@ anyhow = "1.0"
 humantime = "2"
 tokio-serial = "5.4.1"
 postcard = "0.7"
-#drogue-ajour-protocol = { path = "../drogue-ajour/protocol", features = ["std"] }
-drogue-ajour-protocol = { git = "https://github.com/lulf/drogue-ajour.git", branch = "main", features = ["std"] }
+drogue-ajour-protocol = { path = "../drogue-ajour/protocol", features = ["std"] }
+#drogue-ajour-protocol = { git = "https://github.com/lulf/drogue-ajour.git", branch = "main", features = ["std"] }

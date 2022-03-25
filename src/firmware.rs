@@ -55,38 +55,34 @@ impl FirmwareUpdater {
 }
 
 impl FirmwareUpdater {
-    async fn report<'m>(&'m self, status: &Status<'m>) -> Result<Command, anyhow::Error> {
+    async fn report<'m>(&'m self, status: &StatusRef<'m>) -> Result<Command, anyhow::Error> {
         match &self {
             Self::File { metadata, data } => {
                 if metadata.version == status.version {
-                    Ok(CommandRef::new_sync(&status.version, None).into())
+                    Ok(Command::new_sync(&status.version, None))
                 } else {
                     if let Some(update) = &status.update {
                         if update.version == metadata.version {
                             if update.offset as usize == metadata.size {
-                                Ok(CommandRef::new_swap(&metadata.version, &[]).into())
+                                Ok(Command::new_swap(&metadata.version, &[0; 32]))
                             } else {
                                 let mtu = status.mtu.unwrap_or(4096) as usize;
                                 let to_copy =
                                     core::cmp::min(mtu, data.len() - update.offset as usize);
                                 let s =
                                     &data[update.offset as usize..update.offset as usize + to_copy];
-                                Ok(CommandRef::new_write(&metadata.version, update.offset, s)
-                                    .into())
+                                Ok(Command::new_write(&metadata.version, update.offset, s))
                             }
                         } else {
                             log::info!("Updating with wrong status, starting over");
                             let mtu = status.mtu.unwrap_or(4096) as usize;
                             let to_copy = core::cmp::min(mtu, data.len());
-                            Ok(
-                                CommandRef::new_write(&metadata.version, 0, &data[..to_copy])
-                                    .into(),
-                            )
+                            Ok(Command::new_write(&metadata.version, 0, &data[..to_copy]))
                         }
                     } else {
                         let mtu = status.mtu.unwrap_or(4096) as usize;
                         let to_copy = core::cmp::min(mtu, data.len());
-                        Ok(CommandRef::new_write(&metadata.version, 0, &data[..to_copy]).into())
+                        Ok(Command::new_write(&metadata.version, 0, &data[..to_copy]))
                     }
                 }
             }
@@ -135,7 +131,7 @@ impl FirmwareUpdater {
         current_version: &str,
         device: &mut F,
     ) -> Result<bool, anyhow::Error> {
-        let mut status = Status::first(&current_version, Some(F::MTU));
+        let mut status = StatusRef::first(&current_version, Some(F::MTU));
         #[allow(unused_mut)]
         #[allow(unused_assignments)]
         let mut v = String::new();
@@ -156,7 +152,7 @@ impl FirmwareUpdater {
                         device.start().await?;
                     }
                     device.write(offset, &data).await?;
-                    status = Status::update(
+                    status = StatusRef::update(
                         &current_version,
                         Some(F::MTU),
                         offset + data.len() as u32,
@@ -173,10 +169,10 @@ impl FirmwareUpdater {
                 }
                 Command::Swap {
                     version: _,
-                    checksum: _,
+                    checksum,
                 } => {
                     println!("Firmware written, instructing device to swap");
-                    device.swap().await?;
+                    device.swap(checksum).await?;
                     return Ok(false);
                 }
             }
@@ -204,7 +200,7 @@ pub trait FirmwareDevice {
     async fn version(&mut self) -> Result<String, anyhow::Error>;
     async fn start(&mut self) -> Result<(), anyhow::Error>;
     async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), anyhow::Error>;
-    async fn swap(&mut self) -> Result<(), anyhow::Error>;
+    async fn swap(&mut self, checksum: [u8; 32]) -> Result<(), anyhow::Error>;
     async fn synced(&mut self) -> Result<(), anyhow::Error>;
 }
 

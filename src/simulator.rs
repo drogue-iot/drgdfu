@@ -41,7 +41,7 @@ impl FirmwareDevice for DeviceSimulator {
         }
     }
 
-    async fn swap(&mut self) -> Result<(), anyhow::Error> {
+    async fn swap(&mut self, _: [u8; 32]) -> Result<(), anyhow::Error> {
         self.version = core::str::from_utf8(&self.flash[0..4])?.to_string();
         Ok(())
     }
