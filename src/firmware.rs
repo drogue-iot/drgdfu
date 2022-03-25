@@ -92,12 +92,12 @@ impl FirmwareUpdater {
                 client,
                 password,
             } => loop {
-                let payload = serde_json::to_string(status)?;
+                let payload = serde_cbor::to_vec(status)?;
                 let result = client
                     .post(url.clone())
                     .basic_auth(user, Some(password))
                     .query(&[("ct", 30)])
-                    .json(&payload)
+                    .body(payload)
                     .send()
                     .await;
 
@@ -110,10 +110,10 @@ impl FirmwareUpdater {
                         ))
                     }
                     Ok(r) => {
-                        if let Ok(payload) = r.text().await {
+                        if let Ok(payload) = r.bytes().await {
                             log::trace!("Received command: {:?}", payload);
-                            if let Ok(cmd) = serde_json::from_str::<Command>(&payload) {
-                                return Ok(cmd);
+                            if let Ok(cmd) = serde_cbor::from_slice::<CommandRef>(&payload) {
+                                return Ok(cmd.into());
                             } else {
                                 log::trace!("Error parsing command, retrying in 1 sec");
                             }
