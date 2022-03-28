@@ -353,7 +353,7 @@ dependencies = [
 [[package]]
 name = "drogue-ajour-protocol"
 version = "0.1.0"
-source = "git+https://github.com/lulf/drogue-ajour.git?branch=main#42fa48e62b15c125d8d1683afdede3010e629856"
+source = "git+https://github.com/lulf/drogue-ajour.git?branch=main#180dc0c131a25d8a2b6033dc6db2bedb75c38a67"
 dependencies = [
  "heapless",
  "serde",
@@ -510,9 +510,9 @@ dependencies = [
 
 [[package]]
 name = "getrandom"
-version = "0.2.5"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d39cd93900197114fa1fcb7ae84ca742095eed9442088988ae74fa744e930e77"
+checksum = "9be70c98951c83b8d2f8f60d7065fa6d5146873094452a1008da8c2f1e4205ad"
 dependencies = [
  "cfg-if 1.0.0",
  "libc",

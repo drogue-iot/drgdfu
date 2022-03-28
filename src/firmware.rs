@@ -1,10 +1,8 @@
-use crate::FirmwareSource;
 use anyhow::anyhow;
 use async_trait::async_trait;
 use drogue_ajour_protocol::*;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::io::Read;
 use std::path::PathBuf;
 use tokio::time::{sleep, Duration};
 
@@ -27,31 +25,6 @@ pub enum FirmwareUpdater {
         password: String,
         client: reqwest::Client,
     },
-}
-
-impl FirmwareUpdater {
-    pub fn new(source: &FirmwareSource) -> Result<Self, anyhow::Error> {
-        match source {
-            FirmwareSource::File { file } => {
-                let metadata = FirmwareFileMeta::from_file(&file)?;
-                let mut file = File::open(&metadata.file)?;
-                let mut data = Vec::new();
-                file.read_to_end(&mut data)?;
-                Ok(Self::File { metadata, data })
-            }
-            FirmwareSource::Cloud {
-                http,
-                application,
-                device,
-                password,
-            } => Ok(Self::Cloud {
-                client: reqwest::Client::new(),
-                url: format!("{}/v1/dfu", http),
-                user: format!("{}@{}", device, application),
-                password: password.to_string(),
-            }),
-        }
-    }
 }
 
 impl FirmwareUpdater {

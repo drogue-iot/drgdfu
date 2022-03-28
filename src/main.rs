@@ -1,15 +1,9 @@
 use clap::{Parser, Subcommand};
+use std::fs::File;
+use std::io::Read;
 use std::path::PathBuf;
 
-mod firmware;
-mod gatt;
-mod serial;
-mod simulator;
-
-use firmware::*;
-use gatt::*;
-use serial::*;
-use simulator::*;
+use drgdfu::*;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -45,6 +39,7 @@ pub enum Mode {
 #[derive(Debug, Subcommand, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Transport {
     /// GATT mode for DFU using BLE GATT
+    #[cfg(feature = "bluez")]
     BleGatt {
         /// The MAC address of the device to update.
         #[clap(long)]
@@ -96,6 +91,31 @@ pub enum FirmwareSource {
     },
 }
 
+impl FirmwareSource {
+    fn into_updater(self) -> Result<FirmwareUpdater, anyhow::Error> {
+        match self {
+            FirmwareSource::File { file } => {
+                let metadata = FirmwareFileMeta::from_file(&file)?;
+                let mut file = File::open(&metadata.file)?;
+                let mut data = Vec::new();
+                file.read_to_end(&mut data)?;
+                Ok(FirmwareUpdater::File { metadata, data })
+            }
+            FirmwareSource::Cloud {
+                http,
+                application,
+                device,
+                password,
+            } => Ok(FirmwareUpdater::Cloud {
+                client: reqwest::Client::new(),
+                url: format!("{}/v1/dfu", http),
+                user: format!("{}@{}", device, application),
+                password: password.to_string(),
+            }),
+        }
+    }
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -108,23 +128,25 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", serde_json::to_string(&firmware)?);
         }
         Mode::Upload { transport } => match transport {
+            #[cfg(feature = "bluez")]
             Transport::BleGatt { device, source } => {
+                use std::sync::Arc;
                 let session = bluer::Session::new().await?;
                 let adapter = session.default_adapter().await?;
                 adapter.set_powered(true).await?;
 
-                let mut s = GattBoard::new(&device, adapter);
-                let updater = FirmwareUpdater::new(&source)?;
+                let mut s = GattBoard::new(&device, Arc::new(adapter));
+                let updater: FirmwareUpdater = source.into_updater()?;
                 updater.run(&mut s).await?;
             }
             Transport::Serial { port, source } => {
                 let mut s = SerialUpdater::new(&port)?;
-                let updater = FirmwareUpdater::new(&source)?;
+                let updater: FirmwareUpdater = source.into_updater()?;
                 updater.run(&mut s).await?;
             }
             Transport::Simulated { source } => {
                 let mut s = DeviceSimulator::new();
-                let updater = FirmwareUpdater::new(&source)?;
+                let updater: FirmwareUpdater = source.into_updater()?;
                 updater.run(&mut s).await?;
             }
         },

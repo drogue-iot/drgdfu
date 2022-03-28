@@ -7,10 +7,11 @@ use bluer::{
 use futures::pin_mut;
 use futures::StreamExt;
 use std::str::FromStr;
+use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
 pub struct GattBoard {
-    adapter: Adapter,
+    adapter: Arc<Adapter>,
     device: String,
     board: Option<Device>,
     updated: bool,
@@ -23,7 +24,7 @@ const FIRMWARE_CHAR_UUID: uuid::Uuid = uuid::Uuid::from_u128(0x00001234000010008
 const VERSION_CHAR_UUID: uuid::Uuid = uuid::Uuid::from_u128(0x0000123700001000800000805f9b34fb);
 
 impl GattBoard {
-    pub fn new(device: &str, adapter: Adapter) -> Self {
+    pub fn new(device: &str, adapter: Arc<Adapter>) -> Self {
         Self {
             device: device.to_string(),
             adapter,
