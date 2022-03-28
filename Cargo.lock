@@ -353,7 +353,7 @@ dependencies = [
 [[package]]
 name = "drogue-ajour-protocol"
 version = "0.1.0"
-source = "git+https://github.com/lulf/drogue-ajour.git?branch=main#e409d66126d42516e8fb3049f2cafaea5e519c8a"
+source = "git+https://github.com/lulf/drogue-ajour.git?branch=main#42fa48e62b15c125d8d1683afdede3010e629856"
 dependencies = [
  "heapless",
  "serde",
