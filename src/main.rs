@@ -111,6 +111,7 @@ impl FirmwareSource {
                 url: format!("{}/v1/dfu", http),
                 user: format!("{}@{}", device, application),
                 password: password.to_string(),
+                timeout: std::time::Duration::from_secs(30),
             }),
         }
     }

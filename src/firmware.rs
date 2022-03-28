@@ -23,6 +23,7 @@ pub enum FirmwareUpdater {
         url: String,
         user: String,
         password: String,
+        timeout: std::time::Duration,
         client: reqwest::Client,
     },
 }
@@ -64,12 +65,13 @@ impl FirmwareUpdater {
                 user,
                 client,
                 password,
+                timeout,
             } => loop {
                 let payload = serde_cbor::to_vec(status)?;
                 let result = client
                     .post(url.clone())
                     .basic_auth(user, Some(password))
-                    .query(&[("ct", 30)])
+                    .query(&[("ct", timeout.as_secs())])
                     .body(payload)
                     .send()
                     .await;
