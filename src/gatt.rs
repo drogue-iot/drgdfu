@@ -49,7 +49,7 @@ impl GattBoard {
 
     async fn mark_booted(&mut self) -> bluer::Result<()> {
         // Trigger DFU process
-        self.write_char(FIRMWARE_SERVICE_UUID, CONTROL_CHAR_UUID, &[4])
+        self.write_char(FIRMWARE_SERVICE_UUID, CONTROL_CHAR_UUID, &[3])
             .await
     }
 
