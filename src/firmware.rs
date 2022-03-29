@@ -33,30 +33,53 @@ impl FirmwareUpdater {
         match &self {
             Self::File { metadata, data } => {
                 if metadata.version == status.version {
-                    Ok(Command::new_sync(&status.version, None))
+                    Ok(Command::new_sync(
+                        &status.version,
+                        None,
+                        status.correlation_id,
+                    ))
                 } else {
                     if let Some(update) = &status.update {
                         if update.version == metadata.version {
                             if update.offset as usize == metadata.size {
-                                Ok(Command::new_swap(&metadata.version, &[0; 32]))
+                                Ok(Command::new_swap(
+                                    &metadata.version,
+                                    &[0; 32],
+                                    status.correlation_id,
+                                ))
                             } else {
                                 let mtu = status.mtu.unwrap_or(4096) as usize;
                                 let to_copy =
                                     core::cmp::min(mtu, data.len() - update.offset as usize);
                                 let s =
                                     &data[update.offset as usize..update.offset as usize + to_copy];
-                                Ok(Command::new_write(&metadata.version, update.offset, s))
+                                Ok(Command::new_write(
+                                    &metadata.version,
+                                    update.offset,
+                                    s,
+                                    status.correlation_id,
+                                ))
                             }
                         } else {
                             log::info!("Updating with wrong status, starting over");
                             let mtu = status.mtu.unwrap_or(4096) as usize;
                             let to_copy = core::cmp::min(mtu, data.len());
-                            Ok(Command::new_write(&metadata.version, 0, &data[..to_copy]))
+                            Ok(Command::new_write(
+                                &metadata.version,
+                                0,
+                                &data[..to_copy],
+                                status.correlation_id,
+                            ))
                         }
                     } else {
                         let mtu = status.mtu.unwrap_or(4096) as usize;
                         let to_copy = core::cmp::min(mtu, data.len());
-                        Ok(Command::new_write(&metadata.version, 0, &data[..to_copy]))
+                        Ok(Command::new_write(
+                            &metadata.version,
+                            0,
+                            &data[..to_copy],
+                            status.correlation_id,
+                        ))
                     }
                 }
             }
@@ -106,7 +129,7 @@ impl FirmwareUpdater {
         current_version: &str,
         device: &mut F,
     ) -> Result<bool, anyhow::Error> {
-        let mut status = StatusRef::first(&current_version, Some(F::MTU));
+        let mut status = StatusRef::first(&current_version, Some(F::MTU), device.id());
         #[allow(unused_mut)]
         #[allow(unused_assignments)]
         let mut v = String::new();
@@ -117,6 +140,7 @@ impl FirmwareUpdater {
                     version,
                     offset,
                     data,
+                    correlation_id: _,
                 } => {
                     v = version.clone();
                     if offset == 0 {
@@ -132,11 +156,13 @@ impl FirmwareUpdater {
                         Some(F::MTU),
                         offset + data.len() as u32,
                         &v,
+                        device.id(),
                     );
                 }
                 Command::Sync {
                     version: _,
                     poll: _,
+                    correlation_id: _,
                 } => {
                     log::info!("Firmware in sync");
                     device.synced().await?;
@@ -145,6 +171,7 @@ impl FirmwareUpdater {
                 Command::Swap {
                     version: _,
                     checksum,
+                    correlation_id: _,
                 } => {
                     println!("Firmware written, instructing device to swap");
                     device.swap(checksum).await?;
@@ -172,11 +199,69 @@ impl FirmwareUpdater {
 #[async_trait]
 pub trait FirmwareDevice {
     const MTU: u32;
+    fn id(&self) -> Option<u32> {
+        None
+    }
     async fn version(&mut self) -> Result<String, anyhow::Error>;
     async fn start(&mut self) -> Result<(), anyhow::Error>;
     async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), anyhow::Error>;
     async fn swap(&mut self, checksum: [u8; 32]) -> Result<(), anyhow::Error>;
     async fn synced(&mut self) -> Result<(), anyhow::Error>;
+}
+
+pub struct AggregateFirmwareDevice<F>
+where
+    F: FirmwareDevice,
+{
+    version: String,
+    devices: Vec<F>,
+}
+
+impl<F> AggregateFirmwareDevice<F>
+where
+    F: FirmwareDevice,
+{
+    pub fn new(version: &str, devices: Vec<F>) -> Self {
+        Self {
+            version: version.to_string(),
+            devices,
+        }
+    }
+}
+
+#[async_trait]
+impl<F> FirmwareDevice for AggregateFirmwareDevice<F>
+where
+    F: FirmwareDevice + Send,
+{
+    const MTU: u32 = F::MTU;
+    async fn version(&mut self) -> Result<String, anyhow::Error> {
+        Ok(self.version.clone())
+    }
+    async fn start(&mut self) -> Result<(), anyhow::Error> {
+        for d in self.devices.iter_mut() {
+            d.start().await?;
+        }
+        Ok(())
+    }
+    async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), anyhow::Error> {
+        for d in self.devices.iter_mut() {
+            d.write(offset, data).await?;
+        }
+        Ok(())
+    }
+    async fn swap(&mut self, checksum: [u8; 32]) -> Result<(), anyhow::Error> {
+        for d in self.devices.iter_mut() {
+            d.swap(checksum).await?;
+        }
+        Ok(())
+    }
+    async fn synced(&mut self) -> Result<(), anyhow::Error> {
+        for d in self.devices.iter_mut() {
+            d.synced().await?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug)]

@@ -34,7 +34,7 @@ anyhow = "1.0"
 humantime = "2"
 tokio-serial = "5.4.1"
 postcard = "0.7"
-drogue-ajour-protocol = { git = "https://github.com/lulf/drogue-ajour.git", branch = "main", features = ["std"] }
+drogue-ajour-protocol = { git = "https://github.com/drogue-iot/drogue-ajour.git", branch = "main", features = ["std"] }
 
 [features]
 default = ["bluez"]

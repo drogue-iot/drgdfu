@@ -353,7 +353,7 @@ dependencies = [
 [[package]]
 name = "drogue-ajour-protocol"
 version = "0.1.0"
-source = "git+https://github.com/lulf/drogue-ajour.git?branch=main#180dc0c131a25d8a2b6033dc6db2bedb75c38a67"
+source = "git+https://github.com/drogue-iot/drogue-ajour.git?branch=main#0290463363453232927c6402d4df2266764d3f19"
 dependencies = [
  "heapless",
  "serde",
@@ -858,9 +858,9 @@ dependencies = [
 
 [[package]]
 name = "native-tls"
-version = "0.2.9"
+version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09bf6f32a3afefd0b587ee42ed19acd945c6d1f3b5424040f50b2f24ab16be77"
+checksum = "fd7e2f3618557f980e0b17e8856252eee3c97fa12c54dff0ca290fb6266ca4a9"
 dependencies = [
  "lazy_static 1.4.0",
  "libc",
@@ -1487,9 +1487,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "1.0.89"
+version = "1.0.90"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea297be220d52398dcc07ce15a209fce436d361735ac1db700cab3b6cdfb9f54"
+checksum = "704df27628939572cd88d33f171cd6f896f4eaca85252c6e0a72d8d8287ee86f"
 dependencies = [
  "proc-macro2",
  "quote",
