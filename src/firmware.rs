@@ -209,61 +209,6 @@ pub trait FirmwareDevice {
     async fn synced(&mut self) -> Result<(), anyhow::Error>;
 }
 
-pub struct AggregateFirmwareDevice<F>
-where
-    F: FirmwareDevice,
-{
-    version: String,
-    devices: Vec<F>,
-}
-
-impl<F> AggregateFirmwareDevice<F>
-where
-    F: FirmwareDevice,
-{
-    pub fn new(version: &str, devices: Vec<F>) -> Self {
-        Self {
-            version: version.to_string(),
-            devices,
-        }
-    }
-}
-
-#[async_trait]
-impl<F> FirmwareDevice for AggregateFirmwareDevice<F>
-where
-    F: FirmwareDevice + Send,
-{
-    const MTU: u32 = F::MTU;
-    async fn version(&mut self) -> Result<String, anyhow::Error> {
-        Ok(self.version.clone())
-    }
-    async fn start(&mut self) -> Result<(), anyhow::Error> {
-        for d in self.devices.iter_mut() {
-            d.start().await?;
-        }
-        Ok(())
-    }
-    async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), anyhow::Error> {
-        for d in self.devices.iter_mut() {
-            d.write(offset, data).await?;
-        }
-        Ok(())
-    }
-    async fn swap(&mut self, checksum: [u8; 32]) -> Result<(), anyhow::Error> {
-        for d in self.devices.iter_mut() {
-            d.swap(checksum).await?;
-        }
-        Ok(())
-    }
-    async fn synced(&mut self) -> Result<(), anyhow::Error> {
-        for d in self.devices.iter_mut() {
-            d.synced().await?;
-        }
-        Ok(())
-    }
-}
-
 #[derive(Debug)]
 pub enum FirmwareError {
     Io(std::io::Error),
