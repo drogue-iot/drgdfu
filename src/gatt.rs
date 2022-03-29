@@ -196,7 +196,7 @@ impl GattBoard {
 
 #[async_trait]
 impl FirmwareDevice for GattBoard {
-    const MTU: u32 = 128;
+    const MTU: u32 = 4096;
     async fn version(&mut self) -> Result<String, anyhow::Error> {
         log::info!("Reading version");
         Ok(self.read_firmware_version().await?)
