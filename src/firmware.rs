@@ -29,7 +29,11 @@ pub enum FirmwareUpdater {
 }
 
 impl FirmwareUpdater {
-    async fn report<'m>(&'m self, status: &StatusRef<'m>) -> Result<Command, anyhow::Error> {
+    async fn report<'m>(
+        &'m self,
+        status: &StatusRef<'m>,
+        name: Option<&str>,
+    ) -> Result<Command, anyhow::Error> {
         match &self {
             Self::File { metadata, data } => {
                 if metadata.version == status.version {
@@ -91,10 +95,16 @@ impl FirmwareUpdater {
                 timeout,
             } => loop {
                 let payload = serde_cbor::to_vec(status)?;
+                let mut query: Vec<(String, String)> = Vec::new();
+                query.push(("ct".to_string(), format!("{}", timeout.as_secs())));
+                if let Some(name) = name {
+                    query.push(("as".to_string(), name.to_string()));
+                }
+
                 let result = client
                     .post(url.clone())
                     .basic_auth(user, Some(password))
-                    .query(&[("ct", timeout.as_secs())])
+                    .query(&query[..])
                     .body(payload)
                     .send()
                     .await;
@@ -128,13 +138,14 @@ impl FirmwareUpdater {
         &self,
         current_version: &str,
         device: &mut F,
+        name: Option<&str>,
     ) -> Result<bool, anyhow::Error> {
-        let mut status = StatusRef::first(&current_version, Some(F::MTU), device.id());
+        let mut status = StatusRef::first(&current_version, Some(F::MTU), None);
         #[allow(unused_mut)]
         #[allow(unused_assignments)]
         let mut v = String::new();
         loop {
-            let cmd = self.report(&status).await?;
+            let cmd = self.report(&status, name).await?;
             match cmd {
                 Command::Write {
                     version,
@@ -156,7 +167,7 @@ impl FirmwareUpdater {
                         Some(F::MTU),
                         offset + data.len() as u32,
                         &v,
-                        device.id(),
+                        None,
                     );
                 }
                 Command::Sync {
@@ -182,12 +193,16 @@ impl FirmwareUpdater {
     }
 
     /// Run the firmware update protocol. Returns when firmware is fully in sync
-    pub async fn run<F: FirmwareDevice>(&self, device: &mut F) -> Result<(), anyhow::Error> {
+    pub async fn run<F: FirmwareDevice>(
+        &self,
+        device: &mut F,
+        name: Option<&str>,
+    ) -> Result<(), anyhow::Error> {
         loop {
             let current_version = device.version().await?;
-            println!("Device reports version {}", current_version);
-            if self.check(&current_version, device).await? {
-                println!("Device is up to date");
+            log::info!("Device reports version {}", current_version);
+            if self.check(&current_version, device, name).await? {
+                log::info!("Device is up to date");
                 break;
             }
         }
@@ -199,9 +214,6 @@ impl FirmwareUpdater {
 #[async_trait]
 pub trait FirmwareDevice {
     const MTU: u32;
-    fn id(&self) -> Option<u32> {
-        None
-    }
     async fn version(&mut self) -> Result<String, anyhow::Error>;
     async fn start(&mut self) -> Result<(), anyhow::Error>;
     async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), anyhow::Error>;

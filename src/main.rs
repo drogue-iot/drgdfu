@@ -138,17 +138,17 @@ async fn main() -> anyhow::Result<()> {
 
                 let mut s = GattBoard::new(&device, Arc::new(adapter));
                 let updater: FirmwareUpdater = source.into_updater()?;
-                updater.run(&mut s).await?;
+                updater.run(&mut s, None).await?;
             }
             Transport::Serial { port, source } => {
                 let mut s = SerialUpdater::new(&port)?;
                 let updater: FirmwareUpdater = source.into_updater()?;
-                updater.run(&mut s).await?;
+                updater.run(&mut s, None).await?;
             }
             Transport::Simulated { source } => {
                 let mut s = DeviceSimulator::new();
                 let updater: FirmwareUpdater = source.into_updater()?;
-                updater.run(&mut s).await?;
+                updater.run(&mut s, None).await?;
             }
         },
     }

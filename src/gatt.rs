@@ -33,6 +33,10 @@ impl GattBoard {
         }
     }
 
+    pub fn address(&self) -> &str {
+        &self.device
+    }
+
     async fn read_firmware_offset(&mut self) -> bluer::Result<u32> {
         let data = self
             .read_char(FIRMWARE_SERVICE_UUID, OFFSET_CHAR_UUID)
