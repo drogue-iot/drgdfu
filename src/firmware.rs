@@ -101,8 +101,9 @@ impl FirmwareUpdater {
                     query.push(("as".to_string(), name.to_string()));
                 }
 
+                let url = format!("{}/v1/dfu", url);
                 let result = client
-                    .post(url.clone())
+                    .post(url)
                     .basic_auth(user, Some(password))
                     .query(&query[..])
                     .body(payload)

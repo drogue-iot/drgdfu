@@ -108,7 +108,7 @@ impl FirmwareSource {
                 password,
             } => Ok(FirmwareUpdater::Cloud {
                 client: reqwest::Client::new(),
-                url: format!("{}/v1/dfu", http),
+                url: http.clone(),
                 user: format!("{}@{}", device, application),
                 password: password.to_string(),
                 timeout: std::time::Duration::from_secs(30),
