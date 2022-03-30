@@ -3,7 +3,12 @@ name = "drgdfu"
 version = "0.1.0"
 authors = ["Ulf Lilleengen <lulf@redhat.com>"]
 edition = "2021"
+license = "Apache-2.0"
 description = "A DFU update tool for Drogue Device's with DFU capabilities"
+repository = "https://github.com/drogue-iot/drgdfu"
+homepage = "https://drogue.io"
+keywords = ["IoT", "DFU", "Firmware", "BLE", "OTA"]
+readme = "README.md"
 
 [lib]
 name = "drgdfu"

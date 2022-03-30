@@ -10,4 +10,4 @@ Supported protocols:
 Supported firmware sources:
 
 * File
-* Future: Drogue Cloud
+* Drogue Cloud running [Drogue Ajour](https://github.com/drogue-iot/drogue-ajour)
