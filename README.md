@@ -6,6 +6,7 @@ Supported protocols:
 
 * Serial
 * BLE GATT
+* Simulated (for testing)
 
 Supported firmware sources:
 
