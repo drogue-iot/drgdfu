@@ -2,17 +2,15 @@ use crate::firmware::FirmwareDevice;
 use async_trait::async_trait;
 use bluer::{
     gatt::remote::{Characteristic, Service},
-    Adapter, AdapterEvent, Address, Device,
+    Adapter, Address, Device,
 };
-use futures::pin_mut;
-use futures::StreamExt;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
 pub struct GattBoard {
     adapter: Arc<Adapter>,
-    device: String,
+    device: Address,
     board: Option<Device>,
     updated: bool,
 }
@@ -26,14 +24,14 @@ const VERSION_CHAR_UUID: uuid::Uuid = uuid::Uuid::from_u128(0x000012370000100080
 impl GattBoard {
     pub fn new(device: &str, adapter: Arc<Adapter>) -> Self {
         Self {
-            device: device.to_string(),
+            device: Address::from_str(device).unwrap(),
             adapter,
             board: None,
             updated: false,
         }
     }
 
-    pub fn address(&self) -> &str {
+    pub fn address(&self) -> &Address {
         &self.device
     }
 
@@ -100,6 +98,7 @@ impl GattBoard {
     async fn swap_firmware(&mut self) -> Result<(), anyhow::Error> {
         // Write signal that DFU process is done and should be applied
         log::info!("DFU process done, setting reset");
+
         self.write_char(FIRMWARE_SERVICE_UUID, CONTROL_CHAR_UUID, &[2])
             .await?;
 
@@ -153,45 +152,37 @@ impl GattBoard {
 
     async fn connect(&mut self) -> bluer::Result<&mut Device> {
         if self.board.is_none() {
-            let session = bluer::Session::new().await?;
-            let adapter = session.default_adapter().await?;
-            adapter.set_powered(true).await?;
-            let discover = adapter.discover_devices().await?;
-            pin_mut!(discover);
-
-            let addr = Address::from_str(&self.device)?;
-
-            while let Some(evt) = discover.next().await {
-                match evt {
-                    AdapterEvent::DeviceAdded(a) if a == addr => {
-                        let device = adapter.device(a)?;
-
-                        sleep(Duration::from_secs(2)).await;
-                        if !device.is_connected().await? {
+            loop {
+                if let Ok(device) = self.adapter.device(self.device) {
+                    // Make sure we get a fresh start
+                    let _ = device.disconnect().await;
+                    sleep(Duration::from_secs(2)).await;
+                    match device.is_connected().await {
+                        Ok(false) => {
                             log::debug!("Connecting...");
-                            let mut retries = 2;
                             loop {
                                 match device.connect().await {
                                     Ok(()) => break,
-                                    Err(err) if retries > 0 => {
-                                        println!("Connect error: {}", &err);
-                                        retries -= 1;
+                                    Err(err) => {
+                                        log::error!("Connect error: {}", &err);
                                     }
-                                    Err(err) => return Err(err.into()),
                                 }
                             }
-                            log::debug!("Connected");
-                        } else {
-                            log::debug!("Already connected");
+                            log::debug!("Connected1");
+                            self.board.replace(device);
+                            break;
                         }
-                        self.board.replace(device);
-                        break;
+                        Ok(true) => {
+                            log::debug!("Connected2");
+                            self.board.replace(device);
+                            break;
+                        }
+                        Err(e) => {
+                            log::info!("Error checking connection, retrying: {:?}", e);
+                        }
                     }
-                    AdapterEvent::DeviceRemoved(a) if a == addr => {
-                        log::info!("Device removed: {}", a);
-                    }
-                    _ => {}
                 }
+                sleep(Duration::from_secs(2)).await;
             }
         }
         Ok(self.board.as_mut().unwrap())
@@ -216,6 +207,7 @@ impl FirmwareDevice for GattBoard {
     async fn swap(&mut self, _: [u8; 32]) -> Result<(), anyhow::Error> {
         log::info!("Swapping firmware");
         let r = Ok(self.swap_firmware().await?);
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
         self.adapter
             .remove_device(self.board.take().unwrap().address())
             .await?;

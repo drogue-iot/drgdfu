@@ -198,16 +198,15 @@ impl FirmwareUpdater {
         &self,
         device: &mut F,
         name: Option<&str>,
-    ) -> Result<(), anyhow::Error> {
-        loop {
-            let current_version = device.version().await?;
-            log::info!("Device reports version {}", current_version);
-            if self.check(&current_version, device, name).await? {
-                log::info!("Device is up to date");
-                break;
-            }
+    ) -> Result<bool, anyhow::Error> {
+        let current_version = device.version().await?;
+        log::info!("Device reports version {}", current_version);
+        if self.check(&current_version, device, name).await? {
+            log::info!("Device is up to date");
+            Ok(true)
+        } else {
+            Ok(false)
         }
-        Ok(())
     }
 }
 
