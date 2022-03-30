@@ -81,7 +81,7 @@ impl GattBoard {
             }
             self.write_char(FIRMWARE_SERVICE_UUID, FIRMWARE_CHAR_UUID, &buf)
                 .await?;
-            log::info!("Write {} bytes at offset {}", buf.len(), offset);
+            log::debug!("Write {} bytes at offset {}", buf.len(), offset);
             offset += buf.len() as u32;
             if offset % 4096 == 0 {
                 println!("{} bytes written", offset)
