@@ -13,7 +13,7 @@ pub struct GattBoard {
     device: Address,
     board: Option<Device>,
     updated: bool,
-    mtu: u8,
+    mtu: Option<u8>,
 }
 
 const FIRMWARE_SERVICE_UUID: uuid::Uuid = uuid::Uuid::from_u128(0x00001000b0cd11ec871fd45ddf138840);
@@ -33,7 +33,7 @@ impl GattBoard {
             adapter,
             board: None,
             updated: false,
-            mtu: 8,
+            mtu: None,
         }
     }
 
@@ -74,10 +74,6 @@ impl GattBoard {
     }
 
     async fn start_firmware_update(&mut self, version: &str) -> Result<(), anyhow::Error> {
-        // Retrieve desired MTU size
-        self.mtu = self.read_mtu().await?;
-        log::debug!("Using MTU size {}", self.mtu);
-
         // Write the version we're updating
         self.write_char(
             FIRMWARE_SERVICE_UUID,
@@ -102,9 +98,15 @@ impl GattBoard {
         mut offset: u32,
         firmware: &[u8],
     ) -> Result<(), anyhow::Error> {
-        let mtu = self.mtu as usize;
+        // Retrieve desired MTU size
+        if self.mtu.is_none() {
+            let mtu = self.read_mtu().await?;
+            self.mtu.replace(mtu);
+        }
+
+        let mtu = self.mtu.unwrap() as usize;
         let mut buf = [0; u8::MAX as usize];
-        for chunk in firmware.chunks(self.mtu as usize) {
+        for chunk in firmware.chunks(mtu) {
             buf[0..chunk.len()].copy_from_slice(chunk);
             if chunk.len() < mtu {
                 buf[chunk.len()..mtu].fill(0);
