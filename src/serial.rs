@@ -49,7 +49,11 @@ impl FirmwareDevice for SerialUpdater {
         }
     }
 
-    async fn start(&mut self) -> Result<(), anyhow::Error> {
+    async fn status(&mut self) -> Result<Option<(u32, String)>, anyhow::Error> {
+        Ok(None)
+    }
+
+    async fn start(&mut self, _: &str) -> Result<(), anyhow::Error> {
         self.request(SerialCommand::Start).await?;
         Ok(())
     }

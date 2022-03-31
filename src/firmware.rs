@@ -65,7 +65,6 @@ impl FirmwareUpdater {
                                 ))
                             }
                         } else {
-                            log::info!("Updating with wrong status, starting over");
                             let mtu = status.mtu.unwrap_or(4096) as usize;
                             let to_copy = core::cmp::min(mtu, data.len());
                             Ok(Command::new_write(
@@ -141,7 +140,19 @@ impl FirmwareUpdater {
         device: &mut F,
         name: Option<&str>,
     ) -> Result<bool, anyhow::Error> {
-        let mut status = StatusRef::first(&current_version, Some(F::MTU), None);
+        let s: Option<(u32, String)> = if let Ok(value) = device.status().await {
+            value
+        } else {
+            None
+        };
+
+        let mut status = if let Some((offset, version)) = &s {
+            println!("Attempting continue from {} version {}", offset, version);
+            StatusRef::update(&current_version, Some(F::MTU), *offset, &version, None)
+        } else {
+            StatusRef::first(&current_version, Some(F::MTU), None)
+        };
+
         #[allow(unused_mut)]
         #[allow(unused_assignments)]
         let mut v = String::new();
@@ -160,7 +171,7 @@ impl FirmwareUpdater {
                             "Updating device firmware from {} to {}",
                             current_version, version
                         );
-                        device.start().await?;
+                        device.start(&v).await?;
                     }
                     device.write(offset, &data).await?;
                     status = StatusRef::update(
@@ -214,10 +225,17 @@ impl FirmwareUpdater {
 #[async_trait]
 pub trait FirmwareDevice {
     const MTU: u32;
+    // Return the current version of firmware running
     async fn version(&mut self) -> Result<String, anyhow::Error>;
-    async fn start(&mut self) -> Result<(), anyhow::Error>;
+    // Return the status of existing firmware write (offset + version being written)
+    async fn status(&mut self) -> Result<Option<(u32, String)>, anyhow::Error>;
+    // Prepare a new firmware write from offset 0
+    async fn start(&mut self, version: &str) -> Result<(), anyhow::Error>;
+    // Write firmware to offset
     async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), anyhow::Error>;
+    // Swap firmware assuming checksum matches
     async fn swap(&mut self, checksum: [u8; 32]) -> Result<(), anyhow::Error>;
+    // Mark firmware as in sync
     async fn synced(&mut self) -> Result<(), anyhow::Error>;
 }
 

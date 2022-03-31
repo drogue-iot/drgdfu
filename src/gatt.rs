@@ -13,13 +13,18 @@ pub struct GattBoard {
     device: Address,
     board: Option<Device>,
     updated: bool,
+    mtu: u8,
 }
 
-const FIRMWARE_SERVICE_UUID: uuid::Uuid = uuid::Uuid::from_u128(0x0000186100001000800000805f9b34fb);
-const CONTROL_CHAR_UUID: uuid::Uuid = uuid::Uuid::from_u128(0x0000123600001000800000805f9b34fb);
-const OFFSET_CHAR_UUID: uuid::Uuid = uuid::Uuid::from_u128(0x0000123500001000800000805f9b34fb);
-const FIRMWARE_CHAR_UUID: uuid::Uuid = uuid::Uuid::from_u128(0x0000123400001000800000805f9b34fb);
-const VERSION_CHAR_UUID: uuid::Uuid = uuid::Uuid::from_u128(0x0000123700001000800000805f9b34fb);
+const FIRMWARE_SERVICE_UUID: uuid::Uuid = uuid::Uuid::from_u128(0x00001000b0cd11ec871fd45ddf138840);
+
+const VERSION_CHAR_UUID: uuid::Uuid = uuid::Uuid::from_u128(0x00001001b0cd11ec871fd45ddf138840);
+const MTU_CHAR_UUID: uuid::Uuid = uuid::Uuid::from_u128(0x00001002b0cd11ec871fd45ddf138840);
+const CONTROL_CHAR_UUID: uuid::Uuid = uuid::Uuid::from_u128(0x00001003b0cd11ec871fd45ddf138840);
+const NEXT_VERSION_CHAR_UUID: uuid::Uuid =
+    uuid::Uuid::from_u128(0x00001004b0cd11ec871fd45ddf138840);
+const OFFSET_CHAR_UUID: uuid::Uuid = uuid::Uuid::from_u128(0x00001005b0cd11ec871fd45ddf138840);
+const FIRMWARE_CHAR_UUID: uuid::Uuid = uuid::Uuid::from_u128(0x00001006b0cd11ec871fd45ddf138840);
 
 impl GattBoard {
     pub fn new(device: &str, adapter: Arc<Adapter>) -> Self {
@@ -28,6 +33,7 @@ impl GattBoard {
             adapter,
             board: None,
             updated: false,
+            mtu: 8,
         }
     }
 
@@ -49,13 +55,37 @@ impl GattBoard {
         Ok(String::from_str(core::str::from_utf8(&data).unwrap()).unwrap())
     }
 
+    async fn read_mtu(&mut self) -> bluer::Result<u8> {
+        let data = self.read_char(FIRMWARE_SERVICE_UUID, MTU_CHAR_UUID).await?;
+        Ok(data[0])
+    }
+
+    async fn read_next_firmware_version(&mut self) -> bluer::Result<String> {
+        let data = self
+            .read_char(FIRMWARE_SERVICE_UUID, NEXT_VERSION_CHAR_UUID)
+            .await?;
+        Ok(String::from_str(core::str::from_utf8(&data).unwrap()).unwrap())
+    }
+
     async fn mark_booted(&mut self) -> bluer::Result<()> {
         // Trigger DFU process
         self.write_char(FIRMWARE_SERVICE_UUID, CONTROL_CHAR_UUID, &[3])
             .await
     }
 
-    async fn start_firmware_update(&mut self) -> Result<(), anyhow::Error> {
+    async fn start_firmware_update(&mut self, version: &str) -> Result<(), anyhow::Error> {
+        // Retrieve desired MTU size
+        self.mtu = self.read_mtu().await?;
+        log::debug!("Using MTU size {}", self.mtu);
+
+        // Write the version we're updating
+        self.write_char(
+            FIRMWARE_SERVICE_UUID,
+            NEXT_VERSION_CHAR_UUID,
+            version.as_bytes(),
+        )
+        .await?;
+
         // Trigger DFU process
         self.write_char(FIRMWARE_SERVICE_UUID, CONTROL_CHAR_UUID, &[1])
             .await?;
@@ -72,17 +102,23 @@ impl GattBoard {
         mut offset: u32,
         firmware: &[u8],
     ) -> Result<(), anyhow::Error> {
-        const CHUNK_SIZE: usize = 64;
-        let mut buf = [0; CHUNK_SIZE];
-        for chunk in firmware.chunks(CHUNK_SIZE) {
+        println!(
+            "Writing {} bytes at {} using MTU {}",
+            firmware.len(),
+            offset,
+            self.mtu
+        );
+        let mtu = self.mtu as usize;
+        let mut buf = [0; u8::MAX as usize];
+        for chunk in firmware.chunks(self.mtu as usize) {
             buf[0..chunk.len()].copy_from_slice(chunk);
-            if chunk.len() < buf.len() {
-                buf[chunk.len()..].fill(0);
+            if chunk.len() < mtu {
+                buf[chunk.len()..mtu].fill(0);
             }
-            self.write_char(FIRMWARE_SERVICE_UUID, FIRMWARE_CHAR_UUID, &buf)
+            self.write_char(FIRMWARE_SERVICE_UUID, FIRMWARE_CHAR_UUID, &buf[0..mtu])
                 .await?;
-            log::debug!("Write {} bytes at offset {}", buf.len(), offset);
-            offset += buf.len() as u32;
+            log::debug!("Write {} bytes at offset {}", mtu, offset);
+            offset += mtu as u32;
             if offset % 4096 == 0 {
                 println!("{} bytes written", offset)
             }
@@ -193,19 +229,26 @@ impl GattBoard {
 impl FirmwareDevice for GattBoard {
     const MTU: u32 = 4096;
     async fn version(&mut self) -> Result<String, anyhow::Error> {
-        log::info!("Reading version");
+        log::debug!("Reading version");
         Ok(self.read_firmware_version().await?)
     }
 
-    async fn start(&mut self) -> Result<(), anyhow::Error> {
-        log::info!("Start updated");
-        Ok(self.start_firmware_update().await?)
+    async fn status(&mut self) -> Result<Option<(u32, String)>, anyhow::Error> {
+        log::debug!("Status");
+        let next = self.read_next_firmware_version().await?;
+        let offset = self.read_firmware_offset().await?;
+        Ok(Some((offset, next)))
+    }
+
+    async fn start(&mut self, version: &str) -> Result<(), anyhow::Error> {
+        log::debug!("Start update");
+        Ok(self.start_firmware_update(version).await?)
     }
     async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), anyhow::Error> {
         Ok(self.write_firmware(offset, data).await?)
     }
     async fn swap(&mut self, _: [u8; 32]) -> Result<(), anyhow::Error> {
-        log::info!("Swapping firmware");
+        log::debug!("Swapping firmware");
         let r = Ok(self.swap_firmware().await?);
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
         self.adapter
@@ -217,10 +260,11 @@ impl FirmwareDevice for GattBoard {
 
     async fn synced(&mut self) -> Result<(), anyhow::Error> {
         if self.updated {
-            log::info!("Mark as booted");
+            log::debug!("Mark as booted");
+            self.updated = false;
             Ok(self.mark_booted().await?)
         } else {
-            log::info!("Not updated?!");
+            log::debug!("Not updated?!");
             Ok(())
         }
     }

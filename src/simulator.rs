@@ -27,9 +27,14 @@ impl FirmwareDevice for DeviceSimulator {
         Ok(self.version.clone())
     }
 
-    async fn start(&mut self) -> Result<(), anyhow::Error> {
+    async fn start(&mut self, _: &str) -> Result<(), anyhow::Error> {
         Ok(())
     }
+
+    async fn status(&mut self) -> Result<Option<(u32, String)>, anyhow::Error> {
+        Ok(None)
+    }
+
     async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), anyhow::Error> {
         let offset = offset as usize;
         if offset + data.len() >= self.flash.len() {
