@@ -147,7 +147,6 @@ impl FirmwareUpdater {
         };
 
         let mut status = if let Some((offset, version)) = &s {
-            println!("Attempting continue from {} version {}", offset, version);
             StatusRef::update(&current_version, Some(F::MTU), *offset, &version, None)
         } else {
             StatusRef::first(&current_version, Some(F::MTU), None)
