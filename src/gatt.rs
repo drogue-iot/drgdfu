@@ -102,12 +102,6 @@ impl GattBoard {
         mut offset: u32,
         firmware: &[u8],
     ) -> Result<(), anyhow::Error> {
-        println!(
-            "Writing {} bytes at {} using MTU {}",
-            firmware.len(),
-            offset,
-            self.mtu
-        );
         let mtu = self.mtu as usize;
         let mut buf = [0; u8::MAX as usize];
         for chunk in firmware.chunks(self.mtu as usize) {
