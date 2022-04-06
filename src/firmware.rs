@@ -190,6 +190,15 @@ impl FirmwareUpdater {
                     device.synced().await?;
                     return Ok(true);
                 }
+                Command::Wait {
+                    poll,
+                    correlation_id: _,
+                } => {
+                    if let Some(poll) = poll {
+                        println!("Instructed to wait {} seconds", poll);
+                        sleep(Duration::from_secs(poll as u64)).await;
+                    }
+                }
                 Command::Swap {
                     version: _,
                     checksum,

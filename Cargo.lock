@@ -352,9 +352,9 @@ dependencies = [
 
 [[package]]
 name = "drogue-ajour-protocol"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48fb237b0a3e4010095607acbb4904b0806d590db454e6911db406238ef5c521"
+checksum = "81cf8fdefa817a19ffe09974e0cd522aa432c10d4b0880af81c9ee94387fde82"
 dependencies = [
  "heapless",
  "serde",
