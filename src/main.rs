@@ -140,7 +140,7 @@ async fn main() -> anyhow::Result<()> {
                 let discover = adapter.discover_devices().await?;
                 tokio::task::spawn(async move {
                     pin_mut!(discover);
-                    while let Some(evt) = discover.next().await {}
+                    while let Some(_) = discover.next().await {}
                 });
 
                 let mut s = GattBoard::new(&device, Arc::new(adapter));
