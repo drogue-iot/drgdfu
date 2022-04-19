@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use futures::{pin_mut, StreamExt};
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
@@ -135,6 +136,12 @@ async fn main() -> anyhow::Result<()> {
                 let session = bluer::Session::new().await?;
                 let adapter = session.default_adapter().await?;
                 adapter.set_powered(true).await?;
+
+                let discover = adapter.discover_devices().await?;
+                tokio::task::spawn(async move {
+                    pin_mut!(discover);
+                    while let Some(evt) = discover.next().await {}
+                });
 
                 let mut s = GattBoard::new(&device, Arc::new(adapter));
                 let updater: FirmwareUpdater = source.into_updater()?;
