@@ -42,6 +42,10 @@ pub enum Transport {
     /// GATT mode for DFU using BLE GATT
     #[cfg(feature = "bluez")]
     BleGatt {
+        /// Enable device discovery
+        #[clap(long)]
+        enable_discovery: bool,
+
         /// The MAC address of the device to update.
         #[clap(long)]
         device: String,
@@ -131,17 +135,23 @@ async fn main() -> anyhow::Result<()> {
         }
         Mode::Upload { transport } => match transport {
             #[cfg(feature = "bluez")]
-            Transport::BleGatt { device, source } => {
+            Transport::BleGatt {
+                enable_discovery,
+                device,
+                source,
+            } => {
                 use std::sync::Arc;
                 let session = bluer::Session::new().await?;
                 let adapter = session.default_adapter().await?;
                 adapter.set_powered(true).await?;
 
-                let discover = adapter.discover_devices().await?;
-                tokio::task::spawn(async move {
-                    pin_mut!(discover);
-                    while let Some(_) = discover.next().await {}
-                });
+                if enable_discovery {
+                    let discover = adapter.discover_devices().await?;
+                    tokio::task::spawn(async move {
+                        pin_mut!(discover);
+                        while let Some(_) = discover.next().await {}
+                    });
+                }
 
                 let mut s = GattBoard::new(&device, Arc::new(adapter));
                 let updater: FirmwareUpdater = source.into_updater()?;
