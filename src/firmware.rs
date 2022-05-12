@@ -200,12 +200,12 @@ impl FirmwareUpdater {
                     }
                 }
                 Command::Swap {
-                    version: _,
+                    version,
                     checksum,
                     correlation_id: _,
                 } => {
                     println!("Firmware written, instructing device to swap");
-                    device.swap(checksum).await?;
+                    device.swap(&version, checksum).await?;
                     return Ok(false);
                 }
             }
@@ -242,7 +242,7 @@ pub trait FirmwareDevice {
     // Write firmware to offset
     async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), anyhow::Error>;
     // Swap firmware assuming checksum matches
-    async fn swap(&mut self, checksum: [u8; 32]) -> Result<(), anyhow::Error>;
+    async fn swap(&mut self, version: &str, checksum: [u8; 32]) -> Result<(), anyhow::Error>;
     // Mark firmware as in sync
     async fn synced(&mut self) -> Result<(), anyhow::Error>;
 }

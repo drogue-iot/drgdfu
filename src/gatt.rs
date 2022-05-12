@@ -243,7 +243,7 @@ impl FirmwareDevice for GattBoard {
     async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), anyhow::Error> {
         Ok(self.write_firmware(offset, data).await?)
     }
-    async fn swap(&mut self, _: [u8; 32]) -> Result<(), anyhow::Error> {
+    async fn swap(&mut self, _: &str, _: [u8; 32]) -> Result<(), anyhow::Error> {
         log::debug!("Swapping firmware");
         let r = Ok(self.swap_firmware().await?);
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;

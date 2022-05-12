@@ -62,7 +62,7 @@ impl FirmwareDevice for SerialUpdater {
         Ok(())
     }
 
-    async fn swap(&mut self, _: [u8; 32]) -> Result<(), anyhow::Error> {
+    async fn swap(&mut self, _: &str, _: [u8; 32]) -> Result<(), anyhow::Error> {
         self.request(SerialCommand::Swap).await?;
         match self.port.read_exact(&mut self.buffer).await {
             Ok(_) => {
