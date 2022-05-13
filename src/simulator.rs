@@ -7,16 +7,16 @@ pub struct DeviceSimulator {
 }
 
 impl DeviceSimulator {
-    pub fn new() -> Self {
+    pub fn new(version: &str) -> Self {
         Self {
-            version: "0000".to_string(),
+            version: version.to_string(),
         }
     }
 }
 
 #[async_trait]
 impl FirmwareDevice for DeviceSimulator {
-    const MTU: u32 = 64;
+    const MTU: u32 = 256;
     async fn version(&mut self) -> Result<String, anyhow::Error> {
         Ok(self.version.clone())
     }
@@ -30,6 +30,8 @@ impl FirmwareDevice for DeviceSimulator {
     }
 
     async fn write(&mut self, _: u32, _: &[u8]) -> Result<(), anyhow::Error> {
+        // Simulate write delay
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         Ok(())
     }
 

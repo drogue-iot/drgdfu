@@ -66,6 +66,10 @@ pub enum Transport {
     },
     /// Fake transport simulating a device. Convenient for testing the protocol
     Simulated {
+        /// The initial version to use for the firmware
+        #[clap(long)]
+        version: String,
+
         /// The source to use for firmware.
         #[clap(subcommand)]
         source: FirmwareSource,
@@ -164,8 +168,8 @@ async fn main() -> anyhow::Result<()> {
                 while !updater.run(&mut s, None).await? {}
                 println!("Firmware updated");
             }
-            Transport::Simulated { source } => {
-                let mut s = DeviceSimulator::new();
+            Transport::Simulated { version, source } => {
+                let mut s = DeviceSimulator::new(&version);
                 let updater: FirmwareUpdater = source.into_updater()?;
                 while !updater.run(&mut s, None).await? {}
                 println!("Firmware updated");
