@@ -1,5 +1,4 @@
 use clap::{Parser, Subcommand};
-use futures::{pin_mut, StreamExt};
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
@@ -40,7 +39,7 @@ pub enum Mode {
 #[derive(Debug, Subcommand, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Transport {
     /// GATT mode for DFU using BLE GATT
-    #[cfg(feature = "bluez")]
+    #[cfg(feature = "ble")]
     BleGatt {
         /// Enable device discovery
         #[clap(long)]
@@ -138,26 +137,27 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", serde_json::to_string(&firmware)?);
         }
         Mode::Upload { transport } => match transport {
-            #[cfg(feature = "bluez")]
+            #[cfg(feature = "ble")]
             Transport::BleGatt {
                 enable_discovery,
                 device,
                 source,
             } => {
-                use std::sync::Arc;
-                let session = bluer::Session::new().await?;
-                let adapter = session.default_adapter().await?;
-                adapter.set_powered(true).await?;
+                use btleplug::api::{Central, Manager as _, ScanFilter};
+                use btleplug::platform::Manager;
+                let manager = Manager::new().await?;
+                let central = manager
+                    .adapters()
+                    .await?
+                    .into_iter()
+                    .nth(0)
+                    .ok_or(anyhow::anyhow!("no adapter found"))?;
 
                 if enable_discovery {
-                    let discover = adapter.discover_devices().await?;
-                    tokio::task::spawn(async move {
-                        pin_mut!(discover);
-                        while let Some(_) = discover.next().await {}
-                    });
+                    central.start_scan(ScanFilter::default()).await?;
                 }
 
-                let mut s = GattBoard::new(&device, Arc::new(adapter));
+                let mut s = GattBoard::new(&device, central);
                 let updater: FirmwareUpdater = source.into_updater()?;
                 while !updater.run(&mut s, None).await? {}
                 println!("Firmware updated");

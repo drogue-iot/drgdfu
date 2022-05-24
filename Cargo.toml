@@ -30,7 +30,7 @@ chrono = "0.4"
 bytes = "1.1"
 serde_json = "1"
 serde_cbor = "0.11"
-bluer = { version = "0.13", optional = true }
+btleplug = { version = "0.9", features = ["serde"], optional = true }
 
 serde = { version = "1", features = ["derive"] }
 stderrlog = "0.4"
@@ -42,5 +42,5 @@ postcard = "0.7"
 drogue-ajour-protocol = { version = "0.2.0", features = ["std"] }
 
 [features]
-default = ["bluez"]
-bluez = [ "bluer" ]
+default = ["ble"]
+ble = [ "btleplug" ]

@@ -1,17 +1,17 @@
 use crate::firmware::FirmwareDevice;
 use async_trait::async_trait;
-use bluer::{
-    gatt::remote::{Characteristic, Service},
-    Adapter, Address, Device,
+use btleplug::api::{
+    Characteristic,
+    BDAddr, Central, Peripheral as _, WriteType,
 };
+use btleplug::platform::{Adapter, Peripheral};
 use std::str::FromStr;
-use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
 pub struct GattBoard {
-    adapter: Arc<Adapter>,
-    device: Address,
-    board: Option<Device>,
+    adapter: Adapter,
+    address: BDAddr,
+    board: Option<Peripheral>,
     updated: bool,
     mtu: Option<u8>,
 }
@@ -27,9 +27,9 @@ const OFFSET_CHAR_UUID: uuid::Uuid = uuid::Uuid::from_u128(0x00001005b0cd11ec871
 const FIRMWARE_CHAR_UUID: uuid::Uuid = uuid::Uuid::from_u128(0x00001006b0cd11ec871fd45ddf138840);
 
 impl GattBoard {
-    pub fn new(device: &str, adapter: Arc<Adapter>) -> Self {
+    pub fn new(device: &str, adapter: Adapter) -> Self {
         Self {
-            device: Address::from_str(device).unwrap(),
+            address: BDAddr::from_str_delim(device).unwrap(),
             adapter,
             board: None,
             updated: false,
@@ -37,37 +37,33 @@ impl GattBoard {
         }
     }
 
-    pub fn address(&self) -> &Address {
-        &self.device
-    }
-
-    async fn read_firmware_offset(&mut self) -> bluer::Result<u32> {
+    async fn read_firmware_offset(&mut self) -> anyhow::Result<u32> {
         let data = self
             .read_char(FIRMWARE_SERVICE_UUID, OFFSET_CHAR_UUID)
             .await?;
         Ok(u32::from_le_bytes([data[0], data[1], data[2], data[3]]))
     }
 
-    async fn read_firmware_version(&mut self) -> bluer::Result<String> {
+    async fn read_firmware_version(&mut self) -> anyhow::Result<String> {
         let data = self
             .read_char(FIRMWARE_SERVICE_UUID, VERSION_CHAR_UUID)
             .await?;
         Ok(String::from_str(core::str::from_utf8(&data).unwrap()).unwrap())
     }
 
-    async fn read_mtu(&mut self) -> bluer::Result<u8> {
+    async fn read_mtu(&mut self) -> anyhow::Result<u8> {
         let data = self.read_char(FIRMWARE_SERVICE_UUID, MTU_CHAR_UUID).await?;
         Ok(data[0])
     }
 
-    async fn read_next_firmware_version(&mut self) -> bluer::Result<String> {
+    async fn read_next_firmware_version(&mut self) -> anyhow::Result<String> {
         let data = self
             .read_char(FIRMWARE_SERVICE_UUID, NEXT_VERSION_CHAR_UUID)
             .await?;
         Ok(String::from_str(core::str::from_utf8(&data).unwrap()).unwrap())
     }
 
-    async fn mark_booted(&mut self) -> bluer::Result<()> {
+    async fn mark_booted(&mut self) -> anyhow::Result<()> {
         // Trigger DFU process
         self.write_char(FIRMWARE_SERVICE_UUID, CONTROL_CHAR_UUID, &[3])
             .await
@@ -137,12 +133,14 @@ impl GattBoard {
         Ok(())
     }
 
-    async fn read_char(&mut self, service: uuid::Uuid, c: uuid::Uuid) -> bluer::Result<Vec<u8>> {
-        let service = self.find_service(service).await?.unwrap();
-        let c = self.find_char(&service, c).await?.unwrap();
-
-        let value = c.read().await?;
-        Ok(value)
+    async fn read_char(&mut self, service: uuid::Uuid, c: uuid::Uuid) -> anyhow::Result<Vec<u8>> {
+        let (device, c) = self.find_char(service, c).await?;
+        if let Some(c) = c {
+            let value = device.read(&c).await?;
+            Ok(value)
+        } else {
+            Err(anyhow::anyhow!("unable to locate characteristic"))
+        }
     }
 
     async fn write_char(
@@ -150,67 +148,68 @@ impl GattBoard {
         service: uuid::Uuid,
         c: uuid::Uuid,
         value: &[u8],
-    ) -> bluer::Result<()> {
-        let service = self.find_service(service).await?.unwrap();
-        let c = self.find_char(&service, c).await?.unwrap();
-
-        c.write(value).await
+    ) -> anyhow::Result<()> {
+        let (device, c) = self.find_char(service, c).await?;
+        if let Some(c) = c {
+            device.write(&c, value, WriteType::WithResponse).await?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("unable to locate characteristic"))
+        }
     }
 
     async fn find_char(
         &mut self,
-        service: &Service,
+        service: uuid::Uuid,
         characteristic: uuid::Uuid,
-    ) -> bluer::Result<Option<Characteristic>> {
-        for c in service.characteristics().await? {
-            let uuid = c.uuid().await?;
-            if uuid == characteristic {
-                return Ok(Some(c));
-            }
-        }
-        Ok(None)
-    }
-
-    async fn find_service(&mut self, service: uuid::Uuid) -> bluer::Result<Option<Service>> {
+    ) -> anyhow::Result<(&mut Peripheral, Option<Characteristic>)> {
         let device = self.connect().await?;
-        for s in device.services().await? {
-            let uuid = s.uuid().await?;
-            if uuid == service {
-                return Ok(Some(s));
+        for s in device.services() {
+            if s.uuid == service {
+                for c in s.characteristics {
+                    if c.uuid == characteristic {
+                        return Ok((device, Some(c)));
+                    }
+                }
             }
         }
-        Ok(None)
+        Ok((device, None))
     }
 
-    async fn connect(&mut self) -> bluer::Result<&mut Device> {
+    async fn connect(&mut self) -> anyhow::Result<&mut Peripheral> {
         if self.board.is_none() {
             loop {
-                if let Ok(device) = self.adapter.device(self.device) {
-                    // Make sure we get a fresh start
-                    let _ = device.disconnect().await;
-                    sleep(Duration::from_secs(2)).await;
-                    match device.is_connected().await {
-                        Ok(false) => {
-                            log::debug!("Connecting...");
-                            loop {
-                                match device.connect().await {
-                                    Ok(()) => break,
-                                    Err(err) => {
-                                        log::error!("Connect error: {}", &err);
+                for device in self.adapter.peripherals().await? {
+                    if let Some(p) = device.properties().await? {
+                        if p.address == self.address {
+                            // Make sure we get a fresh start
+                            let _ = device.disconnect().await;
+                            sleep(Duration::from_secs(2)).await;
+                            match device.is_connected().await {
+                                Ok(false) => {
+                                    log::info!("Connecting...");
+                                    loop {
+                                        match device.connect().await {
+                                            Ok(()) => break,
+                                            Err(err) => {
+                                                log::error!("Connect error: {}", &err);
+                                            }
+                                        }
                                     }
+                                    log::info!("Connected!");
+                                    device.discover_services().await?;
+                                    self.board.replace(device);
+                                    return Ok(self.board.as_mut().unwrap())
+                                }
+                                Ok(true) => {
+                                    log::info!("Connected!");
+                                    self.board.replace(device);
+                                    return Ok(self.board.as_mut().unwrap())
+                                }
+                                Err(e) => {
+                                    log::info!("Error checking connection, retrying: {:?}", e);
                                 }
                             }
-                            log::debug!("Connected1");
-                            self.board.replace(device);
-                            break;
-                        }
-                        Ok(true) => {
-                            log::debug!("Connected2");
-                            self.board.replace(device);
-                            break;
-                        }
-                        Err(e) => {
-                            log::info!("Error checking connection, retrying: {:?}", e);
                         }
                     }
                 }
@@ -247,9 +246,9 @@ impl FirmwareDevice for GattBoard {
         log::debug!("Swapping firmware");
         let r = Ok(self.swap_firmware().await?);
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-        self.adapter
-            .remove_device(self.board.take().unwrap().address())
-            .await?;
+        if let Some(board) = self.board.take() {
+            let _ = board.disconnect().await;
+        }
         self.updated = true;
         r
     }

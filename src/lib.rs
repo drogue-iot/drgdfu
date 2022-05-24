@@ -6,8 +6,8 @@ pub use firmware::*;
 pub use serial::*;
 pub use simulator::*;
 
-#[cfg(feature = "bluez")]
+#[cfg(feature = "ble")]
 mod gatt;
 
-#[cfg(feature = "bluez")]
+#[cfg(feature = "ble")]
 pub use gatt::*;
