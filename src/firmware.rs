@@ -4,7 +4,6 @@ use embedded_update::*;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::path::PathBuf;
-use tokio::time::{sleep, Duration};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FirmwareFileMeta {
@@ -22,6 +21,19 @@ pub struct DrogueFirmwareService {
     pub last_response: Vec<u8>,
 }
 
+impl DrogueFirmwareService {
+    pub fn new(url: &str, user: &str, password: &str, timeout: std::time::Duration) -> Self {
+        Self {
+            url: url.to_string(),
+            user: user.to_string(),
+            password: password.to_string(),
+            timeout,
+            client: reqwest::Client::new(),
+            last_response: Vec::new(),
+        }
+    }
+}
+
 impl embedded_update::UpdateService for DrogueFirmwareService {
     type Error = anyhow::Error;
 
@@ -31,54 +43,50 @@ impl embedded_update::UpdateService for DrogueFirmwareService {
 
     fn request<'m>(&'m mut self, status: &'m Status<'m>) -> Self::RequestFuture<'m> {
         async move {
-            loop {
-                let payload = serde_cbor::to_vec(status)?;
-                let mut query: Vec<(String, String)> = Vec::new();
-                query.push(("ct".to_string(), format!("{}", self.timeout.as_secs())));
-                /* TODO: act on behalf of device
-                if let Some(name) = name {
-                    query.push(("as".to_string(), name.to_string()));
-                }
-                */
+            let payload = serde_cbor::to_vec(status)?;
+            let mut query: Vec<(String, String)> = Vec::new();
+            query.push(("ct".to_string(), format!("{}", self.timeout.as_secs())));
+            /* TODO: act on behalf of device
+            if let Some(name) = name {
+                query.push(("as".to_string(), name.to_string()));
+            }
+            */
 
-                let url = format!("{}/v1/dfu", self.url);
-                let result = self
-                    .client
-                    .post(url)
-                    .basic_auth(&self.user, Some(&self.password))
-                    .query(&query[..])
-                    .body(payload)
-                    .send()
-                    .await;
+            let url = format!("{}/v1/dfu", self.url);
+            let result = self
+                .client
+                .post(url)
+                .basic_auth(&self.user, Some(&self.password))
+                .query(&query[..])
+                .body(payload)
+                .send()
+                .await;
 
-                match result {
-                    Ok(r) if !r.status().is_success() => {
-                        return Err(anyhow!(
-                            "Error reporting status to cloud: {}: {}",
-                            r.status(),
-                            r.text().await.unwrap_or_default()
-                        ))
-                    }
-                    Ok(r) => {
-                        if let Ok(payload) = r.bytes().await {
-                            log::trace!("Received command: {:?}", payload);
-                            {
-                                self.last_response.clear();
-                                self.last_response.extend(payload);
-                            }
-                            /*
-                            if let Ok(cmd) = serde_cbor::de::from_mut_slice::<Command>(
-                                &mut self.last_response[..],
-                            ) {
-                                return Ok(cmd);
-                            } else {
-                                log::trace!("Error parsing command, retrying in 1 sec");
-                            }*/
+            match result {
+                Ok(r) if !r.status().is_success() => Err(anyhow!(
+                    "Error reporting status to cloud: {}: {}",
+                    r.status(),
+                    r.text().await.unwrap_or_default()
+                )),
+                Ok(r) => {
+                    if let Ok(payload) = r.bytes().await {
+                        log::trace!("Received command: {:?}", payload);
+                        {
+                            self.last_response.clear();
+                            self.last_response.extend(payload);
                         }
-                        sleep(Duration::from_secs(1)).await;
+                        if let Ok(cmd) = serde_cbor::de::from_mut_slice::<Command<'m>>(
+                            &mut self.last_response[..],
+                        ) {
+                            Ok(cmd)
+                        } else {
+                            Err(anyhow!("Error parsing command"))
+                        }
+                    } else {
+                        Err(anyhow!("Error retrieving payload"))
                     }
-                    Err(e) => return Err(e.into()),
                 }
+                Err(e) => return Err(e.into()),
             }
         }
     }

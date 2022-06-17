@@ -131,14 +131,9 @@ impl FirmwareSource {
                 device,
                 password,
             } => {
-                let service = DrogueFirmwareService {
-                    client: reqwest::Client::new(),
-                    url: http.clone(),
-                    user: format!("{}@{}", device, application),
-                    password: password.to_string(),
-                    timeout: std::time::Duration::from_secs(30),
-                    last_response: Vec::new(),
-                };
+                let user = format!("{}@{}", device, application);
+                let timeout = std::time::Duration::from_secs(30);
+                let service = DrogueFirmwareService::new(http, &user, password, timeout);
 
                 let mut updater = FirmwareUpdater::new(
                     service,
