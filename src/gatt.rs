@@ -226,6 +226,12 @@ impl FirmwareDevice for GattBoard {
             let version = self.read_firmware_version().await?;
             let next = self.read_next_firmware_version().await?;
             let offset = self.read_firmware_offset().await?;
+            log::trace!(
+                "Current: {:?}, next: {:?}, next offset: {:?}",
+                version,
+                next,
+                offset
+            );
             Ok(FirmwareStatus {
                 current_version: version,
                 next_version: Some(next),

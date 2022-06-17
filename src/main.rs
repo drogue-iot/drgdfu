@@ -87,7 +87,13 @@ pub enum Transport {
 #[derive(Debug, Subcommand, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FirmwareSource {
     /// File based firmware source for updating from a file
-    File { file: PathBuf, metadata: PathBuf },
+    File {
+        #[clap(long)]
+        firmware: PathBuf,
+
+        #[clap(long)]
+        metadata: PathBuf,
+    },
     /// Cloud based firmware source for updating from Drogue IoT
     Cloud {
         /// Url to the HTTP endpoint of Drogue IoT Cloud
@@ -111,16 +117,16 @@ pub enum FirmwareSource {
 impl FirmwareSource {
     async fn run<F: FirmwareDevice>(&mut self, mut d: F) -> Result<(), anyhow::Error> {
         match self {
-            FirmwareSource::File { file, metadata } => {
+            FirmwareSource::File { firmware, metadata } => {
                 let metadata = FirmwareFileMeta::from_file(&metadata)?;
-                let mut file = File::open(&file)?;
+                let mut file = File::open(&firmware)?;
                 let mut data = Vec::new();
                 file.read_to_end(&mut data)?;
                 let service = InMemory::new(metadata.version.as_bytes(), &data[..]);
 
                 let mut updater = FirmwareUpdater::new(service, Default::default());
                 loop {
-                    if let Ok(DeviceStatus::Updated) = updater.run(&mut d, &mut Timer).await {
+                    if let Ok(DeviceStatus::Synced) = updater.run(&mut d, &mut Timer).await {
                         break;
                     }
                 }
@@ -143,7 +149,7 @@ impl FirmwareSource {
                     },
                 );
                 loop {
-                    if let Ok(DeviceStatus::Updated) = updater.run(&mut d, &mut Timer).await {
+                    if let Ok(DeviceStatus::Synced) = updater.run(&mut d, &mut Timer).await {
                         break;
                     }
                 }
