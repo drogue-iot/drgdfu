@@ -1,11 +1,7 @@
-use crate::firmware::FirmwareDevice;
-use async_trait::async_trait;
-use btleplug::api::{
-    Characteristic,
-    BDAddr, Central, Peripheral as _, WriteType,
-};
+use btleplug::api::{BDAddr, Central, Characteristic, Peripheral as _, WriteType};
 use btleplug::platform::{Adapter, Peripheral};
-use std::str::FromStr;
+use core::future::Future;
+use embedded_update::*;
 use tokio::time::{sleep, Duration};
 
 pub struct GattBoard {
@@ -44,11 +40,11 @@ impl GattBoard {
         Ok(u32::from_le_bytes([data[0], data[1], data[2], data[3]]))
     }
 
-    async fn read_firmware_version(&mut self) -> anyhow::Result<String> {
+    async fn read_firmware_version(&mut self) -> anyhow::Result<Vec<u8>> {
         let data = self
             .read_char(FIRMWARE_SERVICE_UUID, VERSION_CHAR_UUID)
             .await?;
-        Ok(String::from_str(core::str::from_utf8(&data).unwrap()).unwrap())
+        Ok(data)
     }
 
     async fn read_mtu(&mut self) -> anyhow::Result<u8> {
@@ -56,11 +52,11 @@ impl GattBoard {
         Ok(data[0])
     }
 
-    async fn read_next_firmware_version(&mut self) -> anyhow::Result<String> {
+    async fn read_next_firmware_version(&mut self) -> anyhow::Result<Vec<u8>> {
         let data = self
             .read_char(FIRMWARE_SERVICE_UUID, NEXT_VERSION_CHAR_UUID)
             .await?;
-        Ok(String::from_str(core::str::from_utf8(&data).unwrap()).unwrap())
+        Ok(data)
     }
 
     async fn mark_booted(&mut self) -> anyhow::Result<()> {
@@ -69,14 +65,10 @@ impl GattBoard {
             .await
     }
 
-    async fn start_firmware_update(&mut self, version: &str) -> Result<(), anyhow::Error> {
+    async fn start_firmware_update(&mut self, version: &[u8]) -> Result<(), anyhow::Error> {
         // Write the version we're updating
-        self.write_char(
-            FIRMWARE_SERVICE_UUID,
-            NEXT_VERSION_CHAR_UUID,
-            version.as_bytes(),
-        )
-        .await?;
+        self.write_char(FIRMWARE_SERVICE_UUID, NEXT_VERSION_CHAR_UUID, version)
+            .await?;
 
         // Trigger DFU process
         self.write_char(FIRMWARE_SERVICE_UUID, CONTROL_CHAR_UUID, &[1])
@@ -199,12 +191,12 @@ impl GattBoard {
                                     log::info!("Connected!");
                                     device.discover_services().await?;
                                     self.board.replace(device);
-                                    return Ok(self.board.as_mut().unwrap())
+                                    return Ok(self.board.as_mut().unwrap());
                                 }
                                 Ok(true) => {
                                     log::info!("Connected!");
                                     self.board.replace(device);
-                                    return Ok(self.board.as_mut().unwrap())
+                                    return Ok(self.board.as_mut().unwrap());
                                 }
                                 Err(e) => {
                                     log::info!("Error checking connection, retrying: {:?}", e);
@@ -220,47 +212,79 @@ impl GattBoard {
     }
 }
 
-#[async_trait]
 impl FirmwareDevice for GattBoard {
-    const MTU: u32 = 4096;
-    async fn version(&mut self) -> Result<String, anyhow::Error> {
-        log::debug!("Reading version");
-        Ok(self.read_firmware_version().await?)
-    }
+    const MTU: usize = 4096;
+    type Version = Vec<u8>;
+    type Error = anyhow::Error;
 
-    async fn status(&mut self) -> Result<Option<(u32, String)>, anyhow::Error> {
-        log::debug!("Status");
-        let next = self.read_next_firmware_version().await?;
-        let offset = self.read_firmware_offset().await?;
-        Ok(Some((offset, next)))
-    }
+    type StatusFuture<'m> = impl Future<Output = Result<FirmwareStatus<Self::Version>, Self::Error>> + 'm
+    where
+        Self: 'm;
 
-    async fn start(&mut self, version: &str) -> Result<(), anyhow::Error> {
-        log::debug!("Start update");
-        Ok(self.start_firmware_update(version).await?)
-    }
-    async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), anyhow::Error> {
-        Ok(self.write_firmware(offset, data).await?)
-    }
-    async fn swap(&mut self, _: &str, _: [u8; 32]) -> Result<(), anyhow::Error> {
-        log::debug!("Swapping firmware");
-        let r = Ok(self.swap_firmware().await?);
-        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-        if let Some(board) = self.board.take() {
-            let _ = board.disconnect().await;
+    fn status(&mut self) -> Self::StatusFuture<'_> {
+        async move {
+            let version = self.read_firmware_version().await?;
+            let next = self.read_next_firmware_version().await?;
+            let offset = self.read_firmware_offset().await?;
+            Ok(FirmwareStatus {
+                current_version: version,
+                next_version: Some(next),
+                next_offset: offset,
+            })
         }
-        self.updated = true;
-        r
     }
 
-    async fn synced(&mut self) -> Result<(), anyhow::Error> {
-        if self.updated {
-            log::debug!("Mark as booted");
-            self.updated = false;
-            Ok(self.mark_booted().await?)
-        } else {
-            log::debug!("Not updated?!");
-            Ok(())
+    type StartFuture<'m> = impl Future<Output = Result<(), Self::Error>> + 'm
+
+    where
+        Self: 'm;
+
+    fn start<'m>(&'m mut self, version: &'m [u8]) -> Self::StartFuture<'m> {
+        async move { Ok(self.start_firmware_update(version).await?) }
+    }
+
+    type WriteFuture<'m> = impl Future<Output = Result<(), Self::Error>> + 'm
+
+    where
+        Self: 'm;
+
+    fn write<'m>(&'m mut self, offset: u32, data: &'m [u8]) -> Self::WriteFuture<'m> {
+        async move { Ok(self.write_firmware(offset, data).await?) }
+    }
+
+    type UpdateFuture<'m> = impl Future<Output = Result<(), Self::Error>> + 'm
+
+    where
+        Self: 'm;
+
+    fn update<'m>(&'m mut self, _: &'m [u8], _: &'m [u8]) -> Self::UpdateFuture<'m> {
+        async move {
+            log::debug!("Swapping firmware");
+            let r = Ok(self.swap_firmware().await?);
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            if let Some(board) = self.board.take() {
+                let _ = board.disconnect().await;
+            }
+            self.updated = true;
+            r
+        }
+    }
+
+    type SyncedFuture<'m> = impl Future<Output = Result<(), Self::Error>> + 'm
+
+    where
+        Self: 'm;
+
+    fn synced(&mut self) -> Self::SyncedFuture<'_> {
+        async move {
+            if self.updated {
+                log::debug!("Mark as booted");
+                self.updated = false;
+                Ok(self.mark_booted().await?)
+            } else {
+                log::debug!("Not updated?!");
+                Ok(())
+            }
         }
     }
 }

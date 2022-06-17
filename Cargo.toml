@@ -1,10 +1,10 @@
 [package]
 name = "drgdfu"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Ulf Lilleengen <lulf@redhat.com>"]
 edition = "2021"
 license = "Apache-2.0"
-description = "A DFU update tool for Drogue Device's with DFU capabilities"
+description = "A DFU update tool and library for devices with DFU capabilities"
 repository = "https://github.com/drogue-iot/drgdfu"
 homepage = "https://drogue.io"
 keywords = ["IoT", "DFU", "Firmware", "BLE", "OTA"]
@@ -23,7 +23,6 @@ path = "src/main.rs"
 uuid = { version = "0.8", features = ["v4"] }
 clap = { version = "3", features = ["derive"] }
 reqwest = { version = "0.11", features = ["json"] }
-async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 log = "0.4.11"
 chrono = "0.4"
@@ -38,8 +37,10 @@ futures = "0.3"
 anyhow = "1.0"
 humantime = "2"
 tokio-serial = "5.4.1"
-postcard = "0.7"
-drogue-ajour-protocol = { version = "0.2.0", features = ["std"] }
+heapless = "0.7"
+embedded-update = { version = "0.4.0", features = ["nightly", "std"] }
+embedded-io = {version = "0.3.0", features = ["tokio"] }
+embedded-hal-async = { version = "0.1.0-alpha.1" }
 
 [features]
 default = ["ble"]

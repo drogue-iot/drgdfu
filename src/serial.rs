@@ -1,14 +1,13 @@
-use crate::firmware::FirmwareDevice;
 use anyhow::anyhow;
-use async_trait::async_trait;
+use core::future::Future;
+use embedded_update::*;
 use postcard::{from_bytes, to_slice};
 use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_serial::SerialStream;
 
 pub struct SerialUpdater {
-    port: SerialStream,
-    buffer: [u8; FRAME_SIZE],
+    serial: embedded_update::device::Serial<SerialStream>,
 }
 
 impl SerialUpdater {
@@ -16,50 +15,51 @@ impl SerialUpdater {
         let p: String = port.to_str().unwrap().to_string();
         let builder = tokio_serial::new(p, 115200);
         Ok(Self {
-            port: SerialStream::open(&builder)?,
-            buffer: [0; FRAME_SIZE],
+            serial: embedded_update::device::Serial::new(SerialStream::open(&builder)?),
         })
-    }
-
-    async fn request<'m>(
-        &'m mut self,
-        command: SerialCommand<'m>,
-    ) -> Result<Option<SerialResponse<'m>>, anyhow::Error> {
-        to_slice(&command, &mut self.buffer)?;
-        self.port.write(&self.buffer).await?;
-
-        self.port.read_exact(&mut self.buffer).await?;
-        let response: Result<Option<SerialResponse>, SerialError> = from_bytes(&self.buffer)?;
-        match response {
-            Ok(r) => Ok(r),
-            Err(e) => Err(anyhow!("Error frame: {:?}", e)),
-        }
     }
 }
 
-#[async_trait]
 impl FirmwareDevice for SerialUpdater {
-    const MTU: u32 = 768;
-    async fn version(&mut self) -> Result<String, anyhow::Error> {
-        let response = self.request(SerialCommand::Version).await?;
-        if let Some(SerialResponse::Version(v)) = response {
-            Ok(core::str::from_utf8(&v[..])?.to_string())
-        } else {
-            Err(anyhow!("Error reading version"))
+    const MTU: usize = 768;
+    type Version = Vec<u8>;
+    type Error = anyhow::Error;
+
+    type StatusFuture<'m> = impl Future<Output = Result<FirmwareStatus<Vec<u8>>, Self::Error>> + 'm
+    where
+        Self: 'm;
+
+    fn status(&mut self) -> Self::StatusFuture<'_> {
+        async move {
+            self.
         }
     }
 
-    async fn status(&mut self) -> Result<Option<(u32, String)>, anyhow::Error> {
-        Ok(None)
+    type StartFuture<'m> = impl Future<Output = Result<(), Self::Error>> + 'm
+    where
+        Self: 'm;
+    fn start(&mut self, _: &str) -> Result<(), anyhow::Error> {
+        async move {
+            self.request(SerialCommand::Start).await?;
+            Ok(())
+        }
     }
 
-    async fn start(&mut self, _: &str) -> Result<(), anyhow::Error> {
-        self.request(SerialCommand::Start).await?;
-        Ok(())
-    }
+    type WriteFuture<'m>
+    where
+        Self: 'm;
+
     async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), anyhow::Error> {
         self.request(SerialCommand::Write(offset, data)).await?;
         Ok(())
+    }
+
+    type UpdateFuture<'m>
+    where
+        Self: 'm;
+
+    fn update<'m>(&'m mut self, version: &'m [u8], checksum: &'m [u8]) -> Self::UpdateFuture<'m> {
+        todo!()
     }
 
     async fn swap(&mut self, _: &str, _: [u8; 32]) -> Result<(), anyhow::Error> {
@@ -78,6 +78,10 @@ impl FirmwareDevice for SerialUpdater {
             }
         }
     }
+
+    type SyncedFuture<'m>
+    where
+        Self: 'm;
 
     async fn synced(&mut self) -> Result<(), anyhow::Error> {
         self.request(SerialCommand::Sync).await?;
