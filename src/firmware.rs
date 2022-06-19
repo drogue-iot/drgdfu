@@ -1,250 +1,95 @@
 use anyhow::anyhow;
-use async_trait::async_trait;
-use drogue_ajour_protocol::*;
+use core::future::Future;
+use embedded_update::*;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::path::PathBuf;
-use tokio::time::{sleep, Duration};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FirmwareFileMeta {
     pub version: String,
     pub size: usize,
-    pub file: PathBuf,
+    pub checksum: String,
 }
 
-#[allow(dead_code)]
-pub enum FirmwareUpdater {
-    File {
-        metadata: FirmwareFileMeta,
-        data: Vec<u8>,
-    },
-    Cloud {
-        url: String,
-        user: String,
-        password: String,
-        timeout: std::time::Duration,
-        client: reqwest::Client,
-    },
+pub struct DrogueFirmwareService {
+    pub url: String,
+    pub user: String,
+    pub password: String,
+    pub timeout: std::time::Duration,
+    pub client: reqwest::Client,
+    pub last_response: Vec<u8>,
 }
 
-impl FirmwareUpdater {
-    async fn report<'m>(
-        &'m self,
-        status: &StatusRef<'m>,
-        name: Option<&str>,
-    ) -> Result<Command, anyhow::Error> {
-        match &self {
-            Self::File { metadata, data } => {
-                if metadata.version == status.version {
-                    Ok(Command::new_sync(
-                        &status.version,
-                        None,
-                        status.correlation_id,
-                    ))
-                } else {
-                    if let Some(update) = &status.update {
-                        if update.version == metadata.version {
-                            if update.offset as usize == metadata.size {
-                                Ok(Command::new_swap(
-                                    &metadata.version,
-                                    &[0; 32],
-                                    status.correlation_id,
-                                ))
-                            } else {
-                                let mtu = status.mtu.unwrap_or(4096) as usize;
-                                let to_copy =
-                                    core::cmp::min(mtu, data.len() - update.offset as usize);
-                                let s =
-                                    &data[update.offset as usize..update.offset as usize + to_copy];
-                                Ok(Command::new_write(
-                                    &metadata.version,
-                                    update.offset,
-                                    s,
-                                    status.correlation_id,
-                                ))
-                            }
+impl DrogueFirmwareService {
+    pub fn new(url: &str, user: &str, password: &str, timeout: std::time::Duration) -> Self {
+        Self {
+            url: url.to_string(),
+            user: user.to_string(),
+            password: password.to_string(),
+            timeout,
+            client: reqwest::Client::new(),
+            last_response: Vec::new(),
+        }
+    }
+}
+
+impl embedded_update::UpdateService for DrogueFirmwareService {
+    type Error = anyhow::Error;
+
+    type RequestFuture<'m> = impl Future<Output = Result<Command<'m>, Self::Error>> + 'm
+    where
+        Self: 'm;
+
+    fn request<'m>(&'m mut self, status: &'m Status<'m>) -> Self::RequestFuture<'m> {
+        async move {
+            let payload = serde_cbor::to_vec(status)?;
+            let mut query: Vec<(String, String)> = Vec::new();
+            query.push(("ct".to_string(), format!("{}", self.timeout.as_secs())));
+            /* TODO: act on behalf of device
+            if let Some(name) = name {
+                query.push(("as".to_string(), name.to_string()));
+            }
+            */
+
+            let url = format!("{}/v1/dfu", self.url);
+            let result = self
+                .client
+                .post(url)
+                .basic_auth(&self.user, Some(&self.password))
+                .query(&query[..])
+                .body(payload)
+                .send()
+                .await;
+
+            match result {
+                Ok(r) if !r.status().is_success() => Err(anyhow!(
+                    "Error reporting status to cloud: {}: {}",
+                    r.status(),
+                    r.text().await.unwrap_or_default()
+                )),
+                Ok(r) => {
+                    if let Ok(payload) = r.bytes().await {
+                        log::trace!("Received command: {:?}", payload);
+                        {
+                            self.last_response.clear();
+                            self.last_response.extend(payload);
+                        }
+                        if let Ok(cmd) = serde_cbor::de::from_mut_slice::<Command<'m>>(
+                            &mut self.last_response[..],
+                        ) {
+                            Ok(cmd)
                         } else {
-                            let mtu = status.mtu.unwrap_or(4096) as usize;
-                            let to_copy = core::cmp::min(mtu, data.len());
-                            Ok(Command::new_write(
-                                &metadata.version,
-                                0,
-                                &data[..to_copy],
-                                status.correlation_id,
-                            ))
+                            Err(anyhow!("Error parsing command"))
                         }
                     } else {
-                        let mtu = status.mtu.unwrap_or(4096) as usize;
-                        let to_copy = core::cmp::min(mtu, data.len());
-                        Ok(Command::new_write(
-                            &metadata.version,
-                            0,
-                            &data[..to_copy],
-                            status.correlation_id,
-                        ))
+                        Err(anyhow!("Error retrieving payload"))
                     }
                 }
-            }
-            Self::Cloud {
-                url,
-                user,
-                client,
-                password,
-                timeout,
-            } => loop {
-                let payload = serde_cbor::to_vec(status)?;
-                let mut query: Vec<(String, String)> = Vec::new();
-                query.push(("ct".to_string(), format!("{}", timeout.as_secs())));
-                if let Some(name) = name {
-                    query.push(("as".to_string(), name.to_string()));
-                }
-
-                let url = format!("{}/v1/dfu", url);
-                let result = client
-                    .post(url)
-                    .basic_auth(user, Some(password))
-                    .query(&query[..])
-                    .body(payload)
-                    .send()
-                    .await;
-
-                match result {
-                    Ok(r) if !r.status().is_success() => {
-                        return Err(anyhow!(
-                            "Error reporting status to cloud: {}: {}",
-                            r.status(),
-                            r.text().await.unwrap_or_default()
-                        ))
-                    }
-                    Ok(r) => {
-                        if let Ok(payload) = r.bytes().await {
-                            log::trace!("Received command: {:?}", payload);
-                            if let Ok(cmd) = serde_cbor::from_slice::<CommandRef>(&payload) {
-                                return Ok(cmd.into());
-                            } else {
-                                log::trace!("Error parsing command, retrying in 1 sec");
-                            }
-                        }
-                        sleep(Duration::from_secs(1)).await;
-                    }
-                    Err(e) => return Err(e.into()),
-                }
-            },
-        }
-    }
-
-    async fn check<F: FirmwareDevice>(
-        &self,
-        current_version: &str,
-        device: &mut F,
-        name: Option<&str>,
-    ) -> Result<bool, anyhow::Error> {
-        let s: Option<(u32, String)> = if let Ok(value) = device.status().await {
-            value
-        } else {
-            None
-        };
-
-        let mut status = if let Some((offset, version)) = &s {
-            StatusRef::update(&current_version, Some(F::MTU), *offset, &version, None)
-        } else {
-            StatusRef::first(&current_version, Some(F::MTU), None)
-        };
-
-        #[allow(unused_mut)]
-        #[allow(unused_assignments)]
-        let mut v = String::new();
-        loop {
-            let cmd = self.report(&status, name).await?;
-            match cmd {
-                Command::Write {
-                    version,
-                    offset,
-                    data,
-                    correlation_id: _,
-                } => {
-                    v = version.clone();
-                    if offset == 0 {
-                        println!(
-                            "Updating device firmware from {} to {}",
-                            current_version, version
-                        );
-                        device.start(&v).await?;
-                    }
-                    device.write(offset, &data).await?;
-                    status = StatusRef::update(
-                        &current_version,
-                        Some(F::MTU),
-                        offset + data.len() as u32,
-                        &v,
-                        None,
-                    );
-                }
-                Command::Sync {
-                    version: _,
-                    poll: _,
-                    correlation_id: _,
-                } => {
-                    log::info!("Firmware in sync");
-                    device.synced().await?;
-                    return Ok(true);
-                }
-                Command::Wait {
-                    poll,
-                    correlation_id: _,
-                } => {
-                    if let Some(poll) = poll {
-                        println!("Instructed to wait {} seconds", poll);
-                        sleep(Duration::from_secs(poll as u64)).await;
-                    }
-                }
-                Command::Swap {
-                    version,
-                    checksum,
-                    correlation_id: _,
-                } => {
-                    println!("Firmware written, instructing device to swap");
-                    device.swap(&version, checksum).await?;
-                    return Ok(false);
-                }
+                Err(e) => return Err(e.into()),
             }
         }
     }
-
-    /// Run the firmware update protocol. Returns when firmware is fully in sync
-    pub async fn run<F: FirmwareDevice>(
-        &self,
-        device: &mut F,
-        name: Option<&str>,
-    ) -> Result<bool, anyhow::Error> {
-        let current_version = device.version().await?;
-        log::info!("Device reports version {}", current_version);
-        if self.check(&current_version, device, name).await? {
-            log::info!("Device is up to date");
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-}
-
-// A device capable of updating it's firmware
-#[async_trait]
-pub trait FirmwareDevice {
-    const MTU: u32;
-    // Return the current version of firmware running
-    async fn version(&mut self) -> Result<String, anyhow::Error>;
-    // Return the status of existing firmware write (offset + version being written)
-    async fn status(&mut self) -> Result<Option<(u32, String)>, anyhow::Error>;
-    // Prepare a new firmware write from offset 0
-    async fn start(&mut self, version: &str) -> Result<(), anyhow::Error>;
-    // Write firmware to offset
-    async fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), anyhow::Error>;
-    // Swap firmware assuming checksum matches
-    async fn swap(&mut self, version: &str, checksum: [u8; 32]) -> Result<(), anyhow::Error>;
-    // Mark firmware as in sync
-    async fn synced(&mut self) -> Result<(), anyhow::Error>;
 }
 
 #[derive(Debug)]
@@ -261,7 +106,7 @@ impl FirmwareFileMeta {
         Ok(Self {
             version: version.to_string(),
             size: len as usize,
-            file: path.clone(),
+            checksum: String::new(),
         })
     }
     pub fn from_file(path: &PathBuf) -> Result<Self, FirmwareError> {

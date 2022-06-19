@@ -1,4 +1,13 @@
+#![feature(generic_associated_types)]
+#![feature(type_alias_impl_trait)]
 use clap::{Parser, Subcommand};
+use core::future::Future;
+use embedded_io::adapters::FromTokio;
+use embedded_update::{
+    device::{Serial, Simulator},
+    service::InMemory,
+    DeviceStatus, FirmwareDevice, FirmwareUpdater, UpdaterConfig,
+};
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
@@ -78,7 +87,13 @@ pub enum Transport {
 #[derive(Debug, Subcommand, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FirmwareSource {
     /// File based firmware source for updating from a file
-    File { file: PathBuf },
+    File {
+        #[clap(long)]
+        firmware: PathBuf,
+
+        #[clap(long)]
+        metadata: PathBuf,
+    },
     /// Cloud based firmware source for updating from Drogue IoT
     Cloud {
         /// Url to the HTTP endpoint of Drogue IoT Cloud
@@ -100,28 +115,49 @@ pub enum FirmwareSource {
 }
 
 impl FirmwareSource {
-    fn into_updater(self) -> Result<FirmwareUpdater, anyhow::Error> {
+    async fn run<F: FirmwareDevice>(&mut self, mut d: F) -> Result<(), anyhow::Error> {
         match self {
-            FirmwareSource::File { file } => {
-                let metadata = FirmwareFileMeta::from_file(&file)?;
-                let mut file = File::open(&metadata.file)?;
+            FirmwareSource::File { firmware, metadata } => {
+                let metadata = FirmwareFileMeta::from_file(&metadata)?;
+                let mut file = File::open(&firmware)?;
                 let mut data = Vec::new();
                 file.read_to_end(&mut data)?;
-                Ok(FirmwareUpdater::File { metadata, data })
+                let service = InMemory::new(metadata.version.as_bytes(), &data[..]);
+
+                let mut updater = FirmwareUpdater::new(service, Default::default());
+                loop {
+                    if let Ok(DeviceStatus::Synced) = updater.run(&mut d, &mut Timer).await {
+                        break;
+                    }
+                }
             }
             FirmwareSource::Cloud {
                 http,
                 application,
                 device,
                 password,
-            } => Ok(FirmwareUpdater::Cloud {
-                client: reqwest::Client::new(),
-                url: http.clone(),
-                user: format!("{}@{}", device, application),
-                password: password.to_string(),
-                timeout: std::time::Duration::from_secs(30),
-            }),
+            } => {
+                let user = format!("{}@{}", device, application);
+                let timeout = std::time::Duration::from_secs(30);
+                let service = DrogueFirmwareService::new(http, &user, password, timeout);
+
+                let mut updater = FirmwareUpdater::new(
+                    service,
+                    UpdaterConfig {
+                        timeout_ms: 30_000,
+                        backoff_ms: 5_000,
+                    },
+                );
+                loop {
+                    if let Ok(DeviceStatus::Synced) = updater.run(&mut d, &mut Timer).await {
+                        break;
+                    }
+                }
+            }
         }
+
+        println!("Firmware updated");
+        Ok(())
     }
 }
 
@@ -141,7 +177,7 @@ async fn main() -> anyhow::Result<()> {
             Transport::BleGatt {
                 enable_discovery,
                 device,
-                source,
+                mut source,
             } => {
                 use btleplug::api::{Central, Manager as _, ScanFilter};
                 use btleplug::platform::Manager;
@@ -157,24 +193,44 @@ async fn main() -> anyhow::Result<()> {
                     central.start_scan(ScanFilter::default()).await?;
                 }
 
-                let mut s = GattBoard::new(&device, central);
-                let updater: FirmwareUpdater = source.into_updater()?;
-                while !updater.run(&mut s, None).await? {}
-                println!("Firmware updated");
+                let s = GattBoard::new(&device, central);
+                source.run(s).await?;
             }
-            Transport::Serial { port, source } => {
-                let mut s = SerialUpdater::new(&port)?;
-                let updater: FirmwareUpdater = source.into_updater()?;
-                while !updater.run(&mut s, None).await? {}
-                println!("Firmware updated");
+            Transport::Serial { port, mut source } => {
+                let p: String = port.to_str().unwrap().to_string();
+                let builder = tokio_serial::new(p, 115200);
+                let s = Serial::new(FromTokio::new(tokio_serial::SerialStream::open(&builder)?));
+                source.run(s).await?;
             }
-            Transport::Simulated { version, source } => {
-                let mut s = DeviceSimulator::new(&version);
-                let updater: FirmwareUpdater = source.into_updater()?;
-                while !updater.run(&mut s, None).await? {}
-                println!("Firmware updated");
+            Transport::Simulated {
+                version,
+                mut source,
+            } => {
+                let s = Simulator::new(version.as_bytes());
+                source.run(s).await?;
             }
         },
     }
     Ok(())
+}
+
+pub struct Timer;
+
+impl embedded_hal_async::delay::DelayUs for Timer {
+    type Error = core::convert::Infallible;
+    type DelayUsFuture<'m> = impl Future<Output = Result<(), Self::Error>> + 'm where Self: 'm;
+    fn delay_us(&mut self, i: u32) -> Self::DelayUsFuture<'_> {
+        async move {
+            tokio::time::sleep(tokio::time::Duration::from_micros(i as u64)).await;
+            Ok(())
+        }
+    }
+
+    type DelayMsFuture<'m> = impl Future<Output = Result<(), Self::Error>> + 'm where Self: 'm;
+    fn delay_ms(&mut self, i: u32) -> Self::DelayMsFuture<'_> {
+        async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(i as u64)).await;
+            Ok(())
+        }
+    }
 }
