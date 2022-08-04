@@ -126,7 +126,7 @@ impl FirmwareSource {
 
                 let mut updater = FirmwareUpdater::new(service, Default::default());
                 loop {
-                    if let Ok(DeviceStatus::Synced) = updater.run(&mut d, &mut Timer).await {
+                    if let Ok(DeviceStatus::Synced(_)) = updater.run(&mut d, &mut Timer).await {
                         break;
                     }
                 }
@@ -149,7 +149,7 @@ impl FirmwareSource {
                     },
                 );
                 loop {
-                    if let Ok(DeviceStatus::Synced) = updater.run(&mut d, &mut Timer).await {
+                    if let Ok(DeviceStatus::Synced(_)) = updater.run(&mut d, &mut Timer).await {
                         break;
                     }
                 }
